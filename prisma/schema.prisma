@@ -1,0 +1,21 @@
+// Prisma schema for Ajoti Backend
+// https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// Placeholder model for initial setup
+// Remove this and add your actual models as needed
+model Placeholder {
+  id        String   @id @default(cuid())
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("_placeholder")
+}
