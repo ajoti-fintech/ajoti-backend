@@ -4,6 +4,8 @@ import { HealthModule } from '@/modules/health/health.module';
 import { PrismaModule } from '@/prisma/prisma.module';
 import { LoggerMiddleware } from '@/common/interceptors/logger.middleware';
 import { appConfig } from '@/config/app.config';
+import { WalletModule } from './modules/wallet/wallet.module';
+import { WebhooksModule } from './modules/webhooks/webhooks.module';
 
 const ENV = process.env.NODE_ENV || 'development';
 
@@ -16,6 +18,8 @@ const ENV = process.env.NODE_ENV || 'development';
     }),
     PrismaModule,
     HealthModule,
+    WalletModule,
+    WebhooksModule,
   ],
 })
 export class AppModule implements NestModule {
