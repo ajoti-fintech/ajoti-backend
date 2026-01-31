@@ -65,6 +65,9 @@ pnpm prisma:migrate:dev
 
 # View database in browser
 pnpm prisma:studio
+
+# Create Superadmin
+pnpm exec ts-node prisma/seed.ts
 ```
 
 ### 4. Run the Application
