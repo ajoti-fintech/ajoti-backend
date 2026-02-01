@@ -1,81 +1,96 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, Logger } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
-import { Transaction, TransactionStatus } from '@prisma/client';
+import { TransactionStatus, Prisma, TransactionType } from '@prisma/client';
 
 @Injectable()
 export class TransactionsService {
+  private readonly logger = new Logger(TransactionsService.name);
+
   constructor(private readonly prisma: PrismaService) {}
 
   /**
-   * Create a pending transaction record
-   * Called when initiating funding or withdrawal
+   * Initialize a funding transaction attempt.
+   * This is recorded before redirecting the user to Flutterwave.
    */
-  async createPendingTransaction(params: {
+  async createFundingAttempt(data: {
     walletId: string;
-    reference: string;
     amount: bigint;
-    currency?: string;
-    provider?: string;
-    metadata?: any;
-  }): Promise<Transaction> {
+    currency: string;
+    providerReference: string; // The tx_ref sent to Flutterwave
+  }) {
     return await this.prisma.transaction.create({
       data: {
-        walletId: params.walletId,
-        reference: params.reference,
-        amount: params.amount,
-        currency: params.currency || 'NGN',
-        provider: params.provider || 'FLUTTERWAVE',
+        walletId: data.walletId,
+        amount: data.amount,
+        currency: data.currency,
+        provider: 'FLUTTERWAVE',
+        reference: data.providerReference,
         status: TransactionStatus.PENDING,
-        rawPayload: params.metadata || {},
+        type: TransactionType.FUNDING,
       },
     });
   }
 
   /**
-   * Update transaction status
+   * Initialize a withdrawal transaction attempt.
    */
-  async updateTransactionStatus(
-    reference: string,
-    status: TransactionStatus,
-    rawPayload?: any,
-  ): Promise<Transaction> {
+  async createWithdrawalAttempt(data: {
+    walletId: string;
+    amount: bigint;
+    currency: string;
+    providerReference: string;
+  }) {
+    return await this.prisma.transaction.create({
+      data: {
+        walletId: data.walletId,
+        amount: data.amount,
+        currency: data.currency,
+        provider: 'FLUTTERWAVE',
+        reference: data.providerReference,
+        status: TransactionStatus.PENDING,
+        type: TransactionType.WITHDRAWAL,
+      },
+    });
+  }
+  /**
+   * Update transaction status after provider notification.
+   */
+  async updateTransactionStatus(id: string, status: TransactionStatus, metadata?: any) {
     return await this.prisma.transaction.update({
-      where: { reference },
+      where: { id },
       data: {
         status,
-        ...(rawPayload && { rawPayload }),
+        metadata: metadata ? (metadata as Prisma.InputJsonValue) : Prisma.DbNull,
+        completedAt: status === TransactionStatus.SUCCESS ? new Date() : null,
       },
     });
   }
 
-  /**
-   * Get transaction by reference
-   */
-  async getTransactionByReference(reference: string): Promise<Transaction | null> {
+  async findByProviderRef(ref: string) {
     return await this.prisma.transaction.findUnique({
-      where: { reference },
+      where: { reference: ref },
     });
   }
 
   /**
-   * Get transactions for a wallet
+   * Get user's transaction history (useful for wallet controller).
    */
-  async getTransactionsByWallet(
+  async getUserTransactions(
     walletId: string,
     options?: {
       limit?: number;
       offset?: number;
+      type?: TransactionType;
       status?: TransactionStatus;
     },
-  ): Promise<Transaction[]> {
+  ) {
     return await this.prisma.transaction.findMany({
       where: {
         walletId,
+        ...(options?.type && { type: options.type }),
         ...(options?.status && { status: options.status }),
       },
-      orderBy: {
-        createdAt: 'desc',
-      },
+      orderBy: { createdAt: 'desc' },
       take: options?.limit || 50,
       skip: options?.offset || 0,
     });

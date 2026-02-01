@@ -1,13 +1,13 @@
 import { IsEnum, IsNotEmpty, IsOptional, IsString } from 'class-validator';
 import { ApiProperty } from '@nestjs/swagger';
-import { WalletStatus } from '@prisma/client';
+import { WalletStatus, BucketType } from '@prisma/client';
 
 /**
- * Response DTO for wallet balance
+ * Response DTO for wallet balance in kobo (Source of Truth representation)
  */
 export class WalletBalanceResponseDto {
   @ApiProperty({
-    description: 'Total balance in kobo',
+    description: 'Total balance in kobo (string to prevent precision loss)',
     example: '100000',
   })
   total: string;
@@ -32,31 +32,19 @@ export class WalletBalanceResponseDto {
 }
 
 /**
- * Response DTO for wallet balance in Naira (human-readable)
+ * Response DTO for wallet balance in Naira (Human-readable)
  */
 export class WalletBalanceNairaDto {
-  @ApiProperty({
-    description: 'Total balance in NGN',
-    example: 1000.0,
-  })
+  @ApiProperty({ description: 'Total balance in NGN', example: 1000.0 })
   total: number;
 
-  @ApiProperty({
-    description: 'Reserved balance in NGN',
-    example: 300.0,
-  })
+  @ApiProperty({ description: 'Reserved balance in NGN', example: 300.0 })
   reserved: number;
 
-  @ApiProperty({
-    description: 'Available balance in NGN',
-    example: 700.0,
-  })
+  @ApiProperty({ description: 'Available balance in NGN', example: 700.0 })
   available: number;
 
-  @ApiProperty({
-    description: 'Currency code',
-    example: 'NGN',
-  })
+  @ApiProperty({ description: 'Currency code', example: 'NGN' })
   currency: string;
 }
 
@@ -64,22 +52,13 @@ export class WalletBalanceNairaDto {
  * Response DTO for wallet information
  */
 export class WalletResponseDto {
-  @ApiProperty({
-    description: 'Wallet ID',
-    example: 'uuid-wallet-id',
-  })
+  @ApiProperty({ description: 'Wallet ID', example: 'uuid-wallet-id' })
   id: string;
 
-  @ApiProperty({
-    description: 'User ID',
-    example: 'uuid-user-id',
-  })
+  @ApiProperty({ description: 'User ID', example: 'uuid-user-id' })
   userId: string;
 
-  @ApiProperty({
-    description: 'Currency code',
-    example: 'NGN',
-  })
+  @ApiProperty({ description: 'Currency code', example: 'NGN' })
   currency: string;
 
   @ApiProperty({
@@ -89,162 +68,92 @@ export class WalletResponseDto {
   })
   status: WalletStatus;
 
-  @ApiProperty({
-    description: 'Wallet creation date',
-    example: '2024-01-29T12:00:00Z',
-  })
+  @ApiProperty({ description: 'Creation date' })
   createdAt: Date;
 
-  @ApiProperty({
-    description: 'Wallet last update date',
-    example: '2024-01-29T12:00:00Z',
-  })
+  @ApiProperty({ description: 'Last update date' })
   updatedAt: Date;
 }
 
-/**
- * Response DTO for wallet with balance
- */
 export class WalletWithBalanceResponseDto extends WalletResponseDto {
-  @ApiProperty({
-    description: 'Wallet balance information',
-    type: WalletBalanceResponseDto,
-  })
+  @ApiProperty({ type: WalletBalanceResponseDto })
   balance: WalletBalanceResponseDto;
 }
 
 /**
- * Response DTO for wallet statistics
+ * DTO for the Bucket response, updated to use sourceId
  */
-export class WalletStatsResponseDto {
-  @ApiProperty({
-    description: 'Total number of transactions',
-    example: 42,
-  })
-  totalTransactions: number;
+export class WalletBucketResponseDto {
+  @ApiProperty()
+  id: string;
+
+  @ApiProperty()
+  walletId: string;
+
+  @ApiProperty({ enum: BucketType })
+  @IsEnum(BucketType)
+  bucketType: BucketType;
 
   @ApiProperty({
-    description: 'Total number of credit transactions',
-    example: 20,
+    description: 'The unique business origin ID (e.g., ROSCA Circle ID)',
+    example: 'uuid-source-id',
   })
-  totalCredits: number;
+  sourceId: string;
 
-  @ApiProperty({
-    description: 'Total number of debit transactions',
-    example: 22,
-  })
-  totalDebits: number;
+  @ApiProperty({ description: 'Reserved amount in kobo' })
+  reservedAmount: string;
 
-  @ApiProperty({
-    description: 'Date of last transaction',
-    example: '2024-01-29T12:00:00Z',
-    nullable: true,
-  })
-  lastTransaction: Date | null;
+  @ApiProperty()
+  createdAt: Date;
+
+  @ApiProperty()
+  updatedAt: Date;
 }
 
-/**
- * DTO for updating wallet status (admin only)
- */
 export class UpdateWalletStatusDto {
-  @ApiProperty({
-    description: 'New wallet status',
-    enum: WalletStatus,
-    example: WalletStatus.RESTRICTED,
-  })
+  @ApiProperty({ enum: WalletStatus })
   @IsEnum(WalletStatus)
   @IsNotEmpty()
   status: WalletStatus;
 
-  @ApiProperty({
-    description: 'Reason for status change',
-    example: 'Suspicious activity detected',
-    required: false,
-  })
+  @ApiProperty({ required: false })
   @IsString()
   @IsOptional()
   reason?: string;
 }
 
-/**
- * Response DTO for bucket information
- */
-export class WalletBucketResponseDto {
-  @ApiProperty({
-    description: 'Bucket ID',
-    example: 'uuid-bucket-id',
-  })
-  id: string;
-
-  @ApiProperty({
-    description: 'Wallet ID',
-    example: 'uuid-wallet-id',
-  })
-  walletId: string;
-
-  @ApiProperty({
-    description: 'Bucket type',
-    example: 'ROSCA',
-  })
-  bucketType: string;
-
-  @ApiProperty({
-    description: 'Reserved amount in kobo',
-    example: '50000',
-  })
-  reservedAmount: string;
-
-  @ApiProperty({
-    description: 'Bucket creation date',
-    example: '2024-01-29T12:00:00Z',
-  })
-  createdAt: Date;
-
-  @ApiProperty({
-    description: 'Bucket last update date',
-    example: '2024-01-29T12:00:00Z',
-  })
-  updatedAt: Date;
-}
-
-/**
- * Standard API response wrapper
- */
 export class ApiResponseDto<T> {
-  @ApiProperty({
-    description: 'Indicates if request was successful',
-    example: true,
-  })
+  @ApiProperty({ example: true })
   success: boolean;
 
-  @ApiProperty({
-    description: 'Response message',
-    example: 'Operation completed successfully',
-  })
+  @ApiProperty({ example: 'Operation successful' })
   message: string;
 
-  @ApiProperty({
-    description: 'Response data',
-  })
+  @ApiProperty({ nullable: true })
   data?: T;
 }
 
+// ==========================================
+// HELPERS
+// ==========================================
+
 /**
- * Helper function to convert kobo to Naira
+ * Convert kobo (BigInt) to Naira (Number)
  */
 export function koboToNaira(kobo: bigint): number {
   return Number(kobo) / 100;
 }
 
 /**
- * Helper function to convert Naira to kobo
+ * Convert Naira to kobo (BigInt)
+ * Uses string-based conversion to avoid floating point math errors
  */
 export function nairaToKobo(naira: number): bigint {
-  return BigInt(Math.round(naira * 100));
+  return BigInt(Math.round(Number(naira.toFixed(2)) * 100));
 }
 
 /**
- * Helper function to format balance for API response
+ * Formats bigint balance for API response
  */
 export function formatBalanceResponse(balance: {
   total: bigint;
@@ -260,7 +169,7 @@ export function formatBalanceResponse(balance: {
 }
 
 /**
- * Helper function to format balance in Naira
+ * Formats balance for Naira-specific endpoints
  */
 export function formatBalanceNaira(balance: {
   total: bigint;

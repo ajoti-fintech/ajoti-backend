@@ -1,9 +1,15 @@
-import { Injectable, BadRequestException, Logger } from '@nestjs/common';
+import { Injectable, Logger, BadRequestException } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
 import { LedgerService } from '../ledger/ledger.service';
 import { TransactionsService } from '../transactions/transactions.service';
-import { EntryType, Category, TransactionStatus } from '@prisma/client';
-import * as crypto from 'crypto';
+import { FlutterwaveService } from '../transactions/flutterwave.service';
+import {
+  TransactionStatus,
+  LedgerSourceType,
+  EntryType,
+  MovementType,
+  BucketType,
+} from '@prisma/client';
 
 @Injectable()
 export class WebhooksService {
@@ -13,181 +19,109 @@ export class WebhooksService {
     private readonly prisma: PrismaService,
     private readonly ledgerService: LedgerService,
     private readonly transactionsService: TransactionsService,
+    private readonly flutterwaveService: FlutterwaveService,
   ) {}
 
   /**
-   * Handle Flutterwave webhook
-   * CRITICAL: This is the authoritative source for wallet credits
-   *
-   * Flow:
-   * 1. Verify signature
-   * 2. Check idempotency
-   * 3. Validate event type
-   * 4. Credit wallet via ledger
-   * 5. Update transaction status
+   * Process Flutterwave Funding Webhook
+   * Refactored to use LedgerService.writeEntry with a single argument.
    */
-  async handleFlutterwaveWebhook(payload: any, verifHash: string): Promise<void> {
-    try {
-      // 1. Verify webhook signature
-      this.verifyFlutterwaveSignature(payload, verifHash);
+  async processFundingWebhook(payload: any): Promise<void> {
+    const eventType = payload.event;
 
-      // 2. Extract event data
-      const eventType = payload.event;
-      const eventId = payload.id || payload.txRef;
-
-      if (!eventId) {
-        throw new BadRequestException('Missing event ID');
-      }
-
-      // 3. Check idempotency (prevent duplicate processing)
-      const isDuplicate = await this.checkIdempotency('FLUTTERWAVE', eventId);
-      if (isDuplicate) {
-        this.logger.warn(`Duplicate webhook event: ${eventId}`);
-        return;
-      }
-
-      // 4. Process based on event type
-      if (eventType === 'charge.completed') {
-        await this.processFundingWebhook(payload, eventId);
-      } else if (eventType === 'transfer.completed') {
-        await this.processWithdrawalWebhook(payload, eventId);
-      } else {
-        this.logger.warn(`Unhandled event type: ${eventType}`);
-      }
-
-      // 5. Record webhook event (after successful processing)
-      await this.recordWebhookEvent('FLUTTERWAVE', eventId, payload);
-    } catch (error) {
-      this.logger.error('Webhook processing failed', error);
-      throw error;
-    }
-  }
-
-  /**
-   * Process funding webhook (credit wallet)
-   */
-  private async processFundingWebhook(payload: any, eventId: string): Promise<void> {
-    const { tx_ref: txRef, amount, currency, status } = payload.data;
-
-    if (status !== 'successful') {
-      this.logger.warn(`Non-successful charge: ${txRef}, status: ${status}`);
+    if (eventType !== 'charge.completed') {
+      this.logger.warn(`Ignoring non-funding event: ${eventType}`);
       return;
     }
 
-    if (currency !== 'NGN') {
-      throw new BadRequestException('Only NGN currency supported');
-    }
+    const { tx_ref, status, amount, id: flwId } = payload.data;
 
-    // Convert amount to kobo (smallest unit)
-    const amountInKobo = BigInt(Math.round(amount * 100));
-
-    // Get transaction record
-    const transaction = await this.transactionsService.getTransactionByReference(txRef);
-    if (!transaction) {
-      throw new BadRequestException(`Transaction not found: ${txRef}`);
-    }
-
-    // ATOMIC: Credit wallet via ledger
-    await this.ledgerService.writeEntry({
-      walletId: transaction.walletId,
-      entryType: EntryType.CREDIT,
-      category: Category.FUNDING,
-      amount: amountInKobo,
-      reference: txRef,
-      metadata: {
-        provider: 'FLUTTERWAVE',
-        eventId,
-        rawPayload: payload,
-      },
+    // 1. Idempotency Check using WebhookEvent table
+    const existingEvent = await this.prisma.webhookEvent.findUnique({
+      where: { eventId: flwId.toString() },
     });
 
-    // Update transaction status
-    await this.transactionsService.updateTransactionStatus(
-      txRef,
-      TransactionStatus.SUCCESS,
-      payload,
-    );
-
-    this.logger.log(`Wallet credited: ${txRef}, amount: ${amountInKobo} kobo`);
-  }
-
-  /**
-   * Process withdrawal webhook (confirm transfer)
-   */
-  private async processWithdrawalWebhook(payload: any, eventId: string): Promise<void> {
-    const { reference, status } = payload.data;
-
-    // Get transaction record
-    const transaction = await this.transactionsService.getTransactionByReference(reference);
-    if (!transaction) {
-      throw new BadRequestException(`Transaction not found: ${reference}`);
+    if (existingEvent) {
+      this.logger.warn(`Webhook event ${flwId} already processed. Skipping.`);
+      return;
     }
 
-    if (status === 'successful') {
-      // Update transaction status to SUCCESS
+    // 2. Find local transaction record
+    const transaction = await this.transactionsService.findByProviderRef(tx_ref);
+    if (!transaction) {
+      throw new BadRequestException(`Transaction with ref ${tx_ref} not found`);
+    }
+
+    if (transaction.status !== TransactionStatus.PENDING) {
+      this.logger.warn(`Transaction ${tx_ref} already in status ${transaction.status}`);
+      return;
+    }
+
+    const verification = await this.flutterwaveService.verifyTransaction(flwId.toString());
+
+    if (
+      verification.status !== 'success' ||
+      verification.data.status !== 'successful' ||
+      verification.data.amount < amount // Safety check against amount tampering
+    ) {
+      this.logger.error(`Fraud/Status Mismatch detected for transaction ${tx_ref}`);
+
       await this.transactionsService.updateTransactionStatus(
-        reference,
-        TransactionStatus.SUCCESS,
-        payload,
+        transaction.id,
+        TransactionStatus.FAILED,
+        { reason: 'Verification failed: Status mismatch or amount discrepancy' },
       );
-      this.logger.log(`Withdrawal confirmed: ${reference}`);
-    } else if (status === 'failed') {
-      // Create reversal entry to restore funds
-      const originalLedgerEntry = await this.prisma.ledgerEntry.findUnique({
-        where: { reference },
+      return;
+    }
+
+    // 3. Process Success Path
+    if (status === 'successful') {
+      // Using a standard Prisma transaction to wrap all operations
+      await this.prisma.$transaction(async (tx) => {
+        // A. Record the Webhook Event for idempotency
+        await tx.webhookEvent.create({
+          data: {
+            provider: 'FLUTTERWAVE',
+            eventId: flwId.toString(),
+            payload: payload,
+          },
+        });
+
+        // B. Credit the Wallet via LedgerService
+        // Passing only 1 argument to writeEntry as per your requirement
+        await this.ledgerService.writeEntry(
+          {
+            walletId: transaction.walletId,
+            amount: BigInt(Math.round(amount * 100)), // Convert Naira to Kobo
+            entryType: EntryType.CREDIT,
+            movementType: MovementType.FUNDING,
+            bucketType: BucketType.MAIN,
+            sourceType: LedgerSourceType.TRANSACTION,
+            sourceId: transaction.id,
+            reference: `FLW-${flwId}`,
+            metadata: { description: `Funding via Flutterwave: ${tx_ref}` },
+          },
+          tx,
+        );
+
+        // C. Mark Transaction as Success
+        await tx.transaction.update({
+          where: { id: transaction.id },
+          data: {
+            status: TransactionStatus.SUCCESS,
+            updatedAt: new Date(),
+          },
+        });
       });
 
-      if (originalLedgerEntry) {
-        await this.ledgerService.createReversalEntry(originalLedgerEntry.id, 'Withdrawal failed');
-      }
-
-      // Update transaction status to FAILED
+      this.logger.log(`Successfully funded wallet ${transaction.walletId} with ${amount}`);
+    } else {
+      // Handle failed/cancelled status
       await this.transactionsService.updateTransactionStatus(
-        reference,
+        transaction.id,
         TransactionStatus.FAILED,
-        payload,
+        { reason: 'Provider reported failure', raw: payload.data },
       );
-      this.logger.warn(`Withdrawal failed: ${reference}`);
     }
-  }
-
-  /**
-   * Verify Flutterwave webhook signature
-   */
-  private verifyFlutterwaveSignature(payload: any, verifHash: string): void {
-    const secretHash = process.env.FLUTTERWAVE_SECRET_HASH;
-
-    if (!secretHash) {
-      throw new Error('FLUTTERWAVE_SECRET_HASH not configured');
-    }
-
-    // Flutterwave sends the hash in the verif-hash header
-    if (verifHash !== secretHash) {
-      throw new BadRequestException('Invalid webhook signature');
-    }
-  }
-
-  /**
-   * Check if webhook event has already been processed
-   */
-  private async checkIdempotency(provider: string, eventId: string): Promise<boolean> {
-    const existing = await this.prisma.webhookEvent.findUnique({
-      where: { eventId },
-    });
-
-    return !!existing;
-  }
-
-  /**
-   * Record webhook event for audit trail
-   */
-  private async recordWebhookEvent(provider: string, eventId: string, payload: any): Promise<void> {
-    await this.prisma.webhookEvent.create({
-      data: {
-        provider,
-        eventId,
-        payload,
-      },
-    });
   }
 }

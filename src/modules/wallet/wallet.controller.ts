@@ -1,29 +1,39 @@
-import { Controller, Get, Param, UseGuards, HttpStatus, HttpCode } from '@nestjs/common';
+import {
+  Controller,
+  Get,
+  Param,
+  UseGuards,
+  HttpStatus,
+  HttpCode,
+  Patch,
+  Query,
+  BadRequestException,
+} from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiResponse, ApiBearerAuth } from '@nestjs/swagger';
 import { WalletService } from './wallet.service';
-import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import {
   WalletBalanceResponseDto,
   WalletWithBalanceResponseDto,
-  WalletStatsResponseDto,
   WalletBucketResponseDto,
   ApiResponseDto,
   formatBalanceResponse,
   formatBalanceNaira,
   WalletBalanceNairaDto,
 } from './dto/wallet.dto';
+import { LedgerService } from '../ledger/ledger.service';
+// Assuming a standard Auth Guard and CurrentUser decorator exist
+// import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 
 @ApiTags('Wallet')
 @Controller('wallet')
-// @UseGuards(AuthGuard) // Uncomment when auth is ready
-@ApiBearerAuth() // Swagger auth documentation
+// @UseGuards(AuthGuard)
+@ApiBearerAuth()
 export class WalletController {
-  constructor(private readonly walletService: WalletService) {}
+  constructor(
+    private readonly walletService: WalletService,
+    private readonly ledgerService: LedgerService,
+  ) {}
 
-  /**
-   * Get current user's wallet
-   * Creates wallet if it doesn't exist
-   */
   @Get()
   @HttpCode(HttpStatus.OK)
   @ApiOperation({
@@ -31,18 +41,9 @@ export class WalletController {
     description:
       'Retrieve the authenticated user wallet. Creates a new wallet if one does not exist.',
   })
-  @ApiResponse({
-    status: 200,
-    description: 'Wallet retrieved successfully',
-    type: WalletWithBalanceResponseDto,
-  })
-  @ApiResponse({
-    status: 401,
-    description: 'Unauthorized - Invalid or missing authentication token',
-  })
-  async getWallet(@CurrentUser('id') userId: string) {
+  @ApiResponse({ status: 200, type: WalletWithBalanceResponseDto })
+  async getWallet(@Query('id') userId: string) {
     const walletWithBalance = await this.walletService.getWalletWithBalance(userId);
-
     return {
       success: true,
       message: 'Wallet retrieved successfully',
@@ -50,31 +51,11 @@ export class WalletController {
     };
   }
 
-  /**
-   * Get wallet balance (in kobo)
-   * Returns balance in smallest unit (kobo) as strings
-   */
   @Get('balance')
   @HttpCode(HttpStatus.OK)
-  @ApiOperation({
-    summary: 'Get wallet balance',
-    description:
-      'Retrieve the authenticated user wallet balance. Balance is derived from the ledger (not stored).',
-  })
-  @ApiResponse({
-    status: 200,
-    description: 'Balance retrieved successfully',
-    type: ApiResponseDto<WalletBalanceResponseDto>,
-  })
-  @ApiResponse({
-    status: 401,
-    description: 'Unauthorized',
-  })
-  @ApiResponse({
-    status: 404,
-    description: 'Wallet not found',
-  })
-  async getBalance(@CurrentUser('id') userId: string) {
+  @ApiOperation({ summary: 'Get wallet balance (kobo)' })
+  @ApiResponse({ status: 200, type: ApiResponseDto<WalletBalanceResponseDto> })
+  async getBalance(@Query('id') userId: string) {
     const wallet = await this.walletService.getOrCreateWallet(userId);
     const balance = await this.walletService.getBalance(wallet.id);
 
@@ -85,22 +66,11 @@ export class WalletController {
     };
   }
 
-  /**
-   * Get wallet balance in Naira (human-readable)
-   * Returns balance converted to NGN as decimal numbers
-   */
   @Get('balance/naira')
   @HttpCode(HttpStatus.OK)
-  @ApiOperation({
-    summary: 'Get wallet balance in Naira',
-    description: 'Retrieve wallet balance in Naira (NGN) as decimal numbers for display purposes.',
-  })
-  @ApiResponse({
-    status: 200,
-    description: 'Balance retrieved successfully',
-    type: ApiResponseDto<WalletBalanceNairaDto>,
-  })
-  async getBalanceNaira(@CurrentUser('id') userId: string) {
+  @ApiOperation({ summary: 'Get wallet balance (Naira)' })
+  @ApiResponse({ status: 200, type: ApiResponseDto<WalletBalanceNairaDto> })
+  async getBalanceNaira(@Query('id') userId: string) {
     const wallet = await this.walletService.getOrCreateWallet(userId);
     const balance = await this.walletService.getBalance(wallet.id);
 
@@ -111,22 +81,37 @@ export class WalletController {
     };
   }
 
-  /**
-   * Get wallet statistics
-   */
-  @Get('stats')
+  @Get('buckets')
   @HttpCode(HttpStatus.OK)
-  @ApiOperation({
-    summary: 'Get wallet statistics',
-    description:
-      'Retrieve statistics about the wallet including transaction counts and last activity.',
-  })
-  @ApiResponse({
-    status: 200,
-    description: 'Statistics retrieved successfully',
-    type: ApiResponseDto<WalletStatsResponseDto>,
-  })
-  async getStats(@CurrentUser('id') userId: string) {
+  @ApiOperation({ summary: 'Get wallet buckets' })
+  @ApiResponse({ status: 200, type: [WalletBucketResponseDto] })
+  async getBuckets(@Query('id') userId: string) {
+    const wallet = await this.walletService.getOrCreateWallet(userId);
+    const buckets = await this.walletService.getWalletBuckets(wallet.id);
+
+    // Map Prisma models to DTOs, converting BigInt to string for JSON safety
+    const formattedBuckets = buckets.map((bucket) => ({
+      id: bucket.id,
+      walletId: bucket.walletId,
+      bucketType: bucket.bucketType,
+      sourceId: bucket.sourceId,
+      reservedAmount: bucket.reservedAmount.toString(),
+      createdAt: bucket.createdAt,
+      updatedAt: bucket.updatedAt,
+    }));
+
+    return {
+      success: true,
+      message: 'Buckets retrieved successfully',
+      data: formattedBuckets,
+    };
+  }
+
+  @Get('statistics')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Get wallet statistics' })
+  @ApiResponse({ status: 200 })
+  async getStats(@Query('id') userId: string) {
     const wallet = await this.walletService.getOrCreateWallet(userId);
     const stats = await this.walletService.getWalletStats(wallet.id);
 
@@ -137,51 +122,10 @@ export class WalletController {
     };
   }
 
-  /**
-   * Get wallet buckets (fund reservations)
-   */
-  @Get('buckets')
-  @HttpCode(HttpStatus.OK)
-  @ApiOperation({
-    summary: 'Get wallet buckets',
-    description: 'Retrieve all buckets (fund reservations) for the user wallet.',
-  })
-  @ApiResponse({
-    status: 200,
-    description: 'Buckets retrieved successfully',
-    type: [WalletBucketResponseDto],
-  })
-  async getBuckets(@CurrentUser('id') userId: string) {
-    const wallet = await this.walletService.getOrCreateWallet(userId);
-    const buckets = await this.walletService.getWalletBuckets(wallet.id);
-
-    // Format buckets for response (convert BigInt to string)
-    const formattedBuckets = buckets.map((bucket) => ({
-      ...bucket,
-      reservedAmount: bucket.reservedAmount.toString(),
-    }));
-
-    return {
-      success: true,
-      message: 'Buckets retrieved successfully',
-      data: formattedBuckets,
-    };
-  }
-
-  /**
-   * Check wallet status
-   */
   @Get('status')
   @HttpCode(HttpStatus.OK)
-  @ApiOperation({
-    summary: 'Check wallet status',
-    description: 'Check if wallet is active and can perform operations.',
-  })
-  @ApiResponse({
-    status: 200,
-    description: 'Status retrieved successfully',
-  })
-  async getStatus(@CurrentUser('id') userId: string) {
+  @ApiOperation({ summary: 'Check wallet status' })
+  async getStatus(@Query('id') userId: string) {
     const wallet = await this.walletService.getOrCreateWallet(userId);
     const isActive = await this.walletService.isWalletActive(wallet.id);
     const canWithdraw = await this.walletService.canWithdraw(wallet.id);
@@ -194,26 +138,20 @@ export class WalletController {
         status: wallet.status,
         isActive,
         canWithdraw,
-        canFund: isActive, // Only active wallets can receive funds
+        canFund: isActive,
       },
     };
   }
 
-  /**
-   * Check if wallet has sufficient balance
-   * Useful for frontend validation before initiating transactions
-   */
   @Get('balance/check/:amount')
   @HttpCode(HttpStatus.OK)
-  @ApiOperation({
-    summary: 'Check sufficient balance',
-    description: 'Check if wallet has sufficient available balance for a given amount (in kobo).',
-  })
-  @ApiResponse({
-    status: 200,
-    description: 'Balance check completed',
-  })
-  async checkBalance(@CurrentUser('id') userId: string, @Param('amount') amount: string) {
+  @ApiOperation({ summary: 'Check sufficient balance' })
+  async checkBalance(@Query('id') userId: string, @Param('amount') amount: string) {
+    // Defensive check for BigInt parsing
+    if (!/^\d+$/.test(amount)) {
+      throw new BadRequestException('Amount must be a positive numeric string (kobo)');
+    }
+
     const wallet = await this.walletService.getOrCreateWallet(userId);
     const amountBigInt = BigInt(amount);
 
@@ -234,35 +172,53 @@ export class WalletController {
       },
     };
   }
+  /**
+   * Get transaction history from the Ledger
+   */
+  @Get('transactions')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Get transaction history' })
+  async getTransactions(
+    @Query('userId') userId: string,
+    @Query('limit') limit?: string,
+    @Query('offset') offset?: string,
+  ) {
+    const wallet = await this.walletService.getOrCreateWallet(userId);
+
+    const transactions = await this.ledgerService.getHistory(wallet.id, {
+      limit: limit ? parseInt(limit) : 50,
+      offset: offset ? parseInt(offset) : 0,
+    });
+
+    // Format BigInt for JSON serialisation
+    const formatted = transactions.map((tx) => ({
+      ...tx,
+      amount: tx.amount.toString(),
+      balanceBefore: tx.balanceBefore.toString(),
+      balanceAfter: tx.balanceAfter.toString(),
+    }));
+
+    return {
+      success: true,
+      message: 'Transaction history retrieved successfully',
+      data: formatted,
+    };
+  }
 }
 
 /**
- * Admin wallet controller (separate from user endpoints)
- * These endpoints should have admin guards
+ * Admin wallet controller
  */
 @ApiTags('Wallet Admin')
 @Controller('admin/wallet')
-// @UseGuards(AuthGuard, AdminGuard) // Uncomment when auth is ready
 @ApiBearerAuth()
 export class WalletAdminController {
   constructor(private readonly walletService: WalletService) {}
 
-  /**
-   * Get any user's wallet by userId (admin only)
-   */
   @Get('user/:userId')
-  @HttpCode(HttpStatus.OK)
-  @ApiOperation({
-    summary: '[Admin] Get user wallet',
-    description: 'Retrieve any user wallet by their user ID.',
-  })
-  @ApiResponse({
-    status: 200,
-    description: 'Wallet retrieved successfully',
-  })
+  @ApiOperation({ summary: '[Admin] Get user wallet by User ID' })
   async getUserWallet(@Param('userId') userId: string) {
     const walletWithBalance = await this.walletService.getWalletWithBalance(userId);
-
     return {
       success: true,
       message: 'Wallet retrieved successfully',
@@ -270,49 +226,10 @@ export class WalletAdminController {
     };
   }
 
-  /**
-   * Get wallet by wallet ID (admin only)
-   */
-  @Get(':walletId')
-  @HttpCode(HttpStatus.OK)
-  @ApiOperation({
-    summary: '[Admin] Get wallet by ID',
-    description: 'Retrieve wallet by wallet ID.',
-  })
-  @ApiResponse({
-    status: 200,
-    description: 'Wallet retrieved successfully',
-  })
-  async getWalletById(@Param('walletId') walletId: string) {
-    const wallet = await this.walletService.getWalletById(walletId);
-    const balance = await this.walletService.getBalance(walletId);
-
-    return {
-      success: true,
-      message: 'Wallet retrieved successfully',
-      data: {
-        ...wallet,
-        balance: formatBalanceResponse(balance),
-      },
-    };
-  }
-
-  /**
-   * Freeze wallet (admin only)
-   */
-  @Get(':walletId/freeze')
-  @HttpCode(HttpStatus.OK)
-  @ApiOperation({
-    summary: '[Admin] Freeze wallet',
-    description: 'Suspend wallet operations.',
-  })
-  @ApiResponse({
-    status: 200,
-    description: 'Wallet frozen successfully',
-  })
+  @Patch(':walletId/freeze')
+  @ApiOperation({ summary: '[Admin] Freeze wallet' })
   async freezeWallet(@Param('walletId') walletId: string) {
     const wallet = await this.walletService.freezeWallet(walletId);
-
     return {
       success: true,
       message: 'Wallet frozen successfully',
@@ -320,22 +237,10 @@ export class WalletAdminController {
     };
   }
 
-  /**
-   * Unfreeze wallet (admin only)
-   */
-  @Get(':walletId/unfreeze')
-  @HttpCode(HttpStatus.OK)
-  @ApiOperation({
-    summary: '[Admin] Unfreeze wallet',
-    description: 'Reactivate a frozen wallet.',
-  })
-  @ApiResponse({
-    status: 200,
-    description: 'Wallet unfrozen successfully',
-  })
+  @Patch(':walletId/unfreeze')
+  @ApiOperation({ summary: '[Admin] Unfreeze wallet' })
   async unfreezeWallet(@Param('walletId') walletId: string) {
     const wallet = await this.walletService.unfreezeWallet(walletId);
-
     return {
       success: true,
       message: 'Wallet unfrozen successfully',
