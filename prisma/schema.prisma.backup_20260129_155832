@@ -1,23 +1,20 @@
 // This is your Prisma schema file,
 // learn more about it in the docs: https://pris.ly/d/prisma-schema
 
-// Looking for ways to speed up your queries, or scale easily with your serverless or edge functions?
-// Try Prisma Accelerate: https://pris.ly/cli/accelerate-init
-
 generator client {
   provider = "prisma-client-js"
-  output   = "../node_modules/.prisma/client"
 }
 
 datasource db {
   provider = "postgresql"
+  url      = env("DATABASE_URL")
 }
 
 // ============================================================================
 // WALLET SYSTEM MODELS
 // ============================================================================
 
-// 1. Wallets
+// 1. Wallets (User's main wallet)
 // One wallet per user - custodial NGN wallet
 model Wallet {
   id        String       @id @default(uuid())
@@ -36,76 +33,58 @@ model Wallet {
 }
 
 enum WalletStatus {
-  ACTIVE // Normal operations allowed
+  ACTIVE     // Normal operations allowed
   RESTRICTED // Limited operations (e.g., can't withdraw)
-  SUSPENDED // No operations allowed
-  CLOSED // Wallet closed permanently
+  SUSPENDED  // No operations allowed
+  CLOSED     // Wallet closed permanently
 }
 
 // 2. Ledger (Append-only transaction log)
 // SOURCE OF TRUTH - Balance is derived from this table
 // CRITICAL: No updates, no deletes - append-only
 model LedgerEntry {
-  id            String       @id @default(uuid())
-  walletId      String       @map("wallet_id")
-  reference     String
-  entryType     EntryType    @map("entry_type")
-  movementType  MovementType @map("movement_type")
-  bucketType    BucketType?  @map("bucket_type")
+  id            String    @id @default(uuid())
+  walletId      String    @map("wallet_id")
+  reference     String    @unique // Idempotency key
+  entryType     EntryType @map("entry_type")
+  category      Category
   amount        BigInt // Store in kobo (smallest unit)
-  balanceBefore BigInt       @map("balance_before")
-  balanceAfter  BigInt       @map("balance_after")
+  balanceBefore BigInt    @map("balance_before")
+  balanceAfter  BigInt    @map("balance_after")
   metadata      Json? // Additional context (provider, event IDs, etc.)
-  createdAt     DateTime     @default(now()) @map("created_at")
-  sourceType    LedgerSourceType      @map("context_type")
-  sourceId      String       @map("context_id")
+  createdAt     DateTime  @default(now()) @map("created_at")
 
   // Relations
   wallet Wallet @relation(fields: [walletId], references: [id])
 
-  @@unique([walletId, reference, sourceType, sourceId])
-  @@index([walletId, createdAt(sort: Desc)]) // Optimized for "Get Latest Balance"
-  @@index([walletId, sourceType, sourceId]) 
+  // Indexes for performance
+  @@index([walletId])
+  @@index([reference])
+  @@index([createdAt])
   @@map("ledger_entries")
 }
 
 enum EntryType {
-  CREDIT // Add money to total balance
-  DEBIT // Remove money from total balance
+  CREDIT  // Add money to total balance
+  DEBIT   // Remove money from total balance
   RESERVE // Lock money (doesn't change total, only available)
   RELEASE // Unlock money (doesn't change total, only available)
 }
 
-enum LedgerSourceType {
-  TRANSACTION // External funding or withdrawal (Flutterwave/Bank)
-  ROSCA_CIRCLE // Any movement related to ROSCA
-  TARGET_SAVINGS // Specific goal-based savings
-  FIXED_SAVINGS // Term-locked funds
-  ADMIN_ADJUSTMENT // Manual corrections or fee waivers
-  SYSTEM // Automated internal jobs (migrations, rewards)
-}
-
-enum BucketType {
-  MAIN // The unreserved/spendable balance
-  ROSCA // Main Wallet <-> ROSCA Bucket
-  TARGET // Main Wallet <-> TARGET Bucket
-  FIXED // Main Wallet <-> FIXED Bucket
-  REMITTANCE // Main Wallet <-> REMITTANCE Bucket
-}
-
-enum MovementType {
-  FUNDING // Money entering the system
-  WITHDRAWAL // Money leaving the system
-  TRANSFER      // Moving between MAIN and other buckets
+enum Category {
+  FUNDING    // Money added via Flutterwave
+  WITHDRAWAL // Money sent to bank account
+  ROSCA      // ROSCA circle operations
+  BUCKET     // Other bucket operations (target, fixed, remittance)
 }
 
 // 3. Wallet Buckets (Logical fund locks)
 // IMPORTANT: Buckets don't hold money - they restrict spendable balance
+// available_balance = total_balance - sum(reserved_amounts)
 model WalletBucket {
   id             String     @id @default(uuid())
   walletId       String     @map("wallet_id")
   bucketType     BucketType @map("bucket_type")
-  sourceId       String    @map("source_id")
   reservedAmount BigInt     @default(0) @map("reserved_amount") // Amount locked in kobo
   createdAt      DateTime   @default(now()) @map("created_at")
   updatedAt      DateTime   @updatedAt @map("updated_at")
@@ -114,11 +93,20 @@ model WalletBucket {
   wallet Wallet @relation(fields: [walletId], references: [id])
 
   // One bucket per type per wallet
-  @@unique([walletId, bucketType, sourceId])
+  @@unique([walletId, bucketType])
   @@map("wallet_buckets")
 }
 
-// 4. External Transactions (Flutterwave tracking) 
+enum BucketType {
+  ROSCA      // ROSCA circle commitments
+  TARGET     // Savings goals
+  FIXED      // Fixed deposits
+  REMITTANCE // International transfers
+}
+
+// 4. External Transactions (Flutterwave tracking)
+// Tracks external payment provider transactions
+// NOT the source of truth - Ledger is the source of truth
 model Transaction {
   id         String            @id @default(uuid())
   walletId   String            @map("wallet_id")
@@ -127,9 +115,7 @@ model Transaction {
   amount     BigInt // Amount in kobo
   currency   String            @default("NGN")
   status     TransactionStatus
-  type       TransactionType   @map("transaction_type")
-  metadata    Json?             // Provider-specific data
-  completedAt DateTime?         @map("completed_at")
+  rawPayload Json?             @map("raw_payload") // Full Flutterwave response
   createdAt  DateTime          @default(now()) @map("created_at")
   updatedAt  DateTime          @updatedAt @map("updated_at")
 
@@ -140,19 +126,13 @@ model Transaction {
   @@index([walletId])
   @@index([reference])
   @@index([status])
-  @@index([type])
   @@map("transactions")
-}
-
-enum TransactionType {
-  FUNDING      // Money coming in (Flutterwave → Wallet)
-  WITHDRAWAL   // Money going out (Wallet → Bank)
 }
 
 enum TransactionStatus {
   PENDING // Initiated, waiting for confirmation
   SUCCESS // Confirmed successful
-  FAILED // Failed or reversed
+  FAILED  // Failed or reversed
 }
 
 // 5. Webhook Idempotency
@@ -199,109 +179,3 @@ model WebhookEvent {
 //   COMPLETED
 //   CANCELLED
 // }
-enum Role {
-  MEMBER
-  ADMIN
-  SUPERADMIN
-}
-
-enum OTPPurpose {
-  VERIFICATION
-  RESET_PASSWORD
-}
-
-enum KYCStatus {
-  NOT_SUBMITTED
-  PENDING
-  APPROVED
-  REJECTED
-}
-
-enum Gender {
-  MALE
-  FEMALE
-}
-
-model User {
-  id        String   @id @default(uuid())
-  email     String   @unique
-  firstName String
-  lastName  String
-  password  String
-  dob       DateTime @default(now())
-  gender    Gender
-  phone     String
-  role      Role     @default(MEMBER)
-
-  isVerified Boolean @default(false)
-
-  profile UserProfile?
-  kyc     KYC?
-
-  refreshTokens  RefreshToken[]
-  otps OtpCode[]
-
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-}
-
-model UserProfile {
-  id     String @id @default(uuid())
-  userId String @unique
-  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
-
-  avatarUrl String?
-
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-}
-
-model KYC {
-  id     String @id @default(cuid())
-  userId String @unique
-  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
-
-  status      KYCStatus @default(NOT_SUBMITTED)
-  docType     String?
-  docNumber   String?
-  docFrontUrl String?
-  docBackUrl  String?
-  selfieUrl   String?
-
-  rejectionReason String?
-
-  submittedAt DateTime?
-  reviewedAt  DateTime?
-
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-}
-
-model OtpCode {
-  id     String @id @default(cuid())
-  userId String
-  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
-
-  purpose   OTPPurpose
-  codeHash  String
-  expiresAt DateTime
-  usedAt    DateTime?
-
-  createdAt DateTime @default(now())
-
-  @@index([userId, purpose])
-}
-
-model RefreshToken {
-  id          String   @id @default(cuid())
-  userId      String
-  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-
-  tokenHash   String
-  revokedAt   DateTime?
-  expiresAt   DateTime
-
-  createdAt   DateTime @default(now())
-
-  @@index([userId])
-}

@@ -8,6 +8,8 @@ import { HealthModule } from '@/modules/health/health.module';
 import { PrismaModule } from '@/prisma/prisma.module';
 import { LoggerMiddleware } from '@/common/interceptors/logger.middleware';
 import { appConfig } from '@/config/app.config';
+import { WalletModule } from './modules/wallet/wallet.module';
+import { WebhooksModule } from './modules/webhooks/webhooks.module';
 import { AuthModule } from './modules/auth/auth.module';
 import { UsersModule } from './modules/users/users.module';
 import { MailModule } from './modules/mail/mail.module';
@@ -56,6 +58,9 @@ const ENV = process.env.NODE_ENV || 'development';
 
     PrismaModule,
     HealthModule,
+ feature/ajoti-wallet-system
+    WalletModule,
+    WebhooksModule,
     MailModule,
     AuthModule,
     UsersModule,
