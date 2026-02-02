@@ -1,21 +1,121 @@
-// Prisma schema for Ajoti Backend
-// https://pris.ly/d/prisma-schema
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+// Looking for ways to speed up your queries, or scale easily with your serverless or edge functions?
+// Try Prisma Accelerate: https://pris.ly/cli/accelerate-init
 
 generator client {
   provider = "prisma-client-js"
+  output   = "../node_modules/.prisma/client"
 }
 
 datasource db {
   provider = "postgresql"
-  url      = env("DATABASE_URL")
 }
 
-// Placeholder model for initial setup
-// Remove this and add your actual models as needed
-model Placeholder {
-  id        String   @id @default(cuid())
+enum Role {
+  MEMBER
+  ADMIN
+  SUPERADMIN
+}
+
+enum OTPPurpose {
+  VERIFICATION
+  RESET_PASSWORD
+}
+
+enum KYCStatus {
+  NOT_SUBMITTED
+  PENDING
+  APPROVED
+  REJECTED
+}
+
+enum Gender {
+  MALE
+  FEMALE
+}
+
+model User {
+  id        String   @id @default(uuid())
+  email     String   @unique
+  firstName String
+  lastName  String
+  password  String
+  dob       DateTime @default(now())
+  gender    Gender
+  phone     String
+  role      Role     @default(MEMBER)
+
+  isVerified Boolean @default(false)
+
+  profile UserProfile?
+  kyc     KYC?
+
+  refreshTokens  RefreshToken[]
+  otps OtpCode[]
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+}
 
-  @@map("_placeholder")
+model UserProfile {
+  id     String @id @default(uuid())
+  userId String @unique
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  avatarUrl String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model KYC {
+  id     String @id @default(cuid())
+  userId String @unique
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  status      KYCStatus @default(NOT_SUBMITTED)
+  docType     String?
+  docNumber   String?
+  docFrontUrl String?
+  docBackUrl  String?
+  selfieUrl   String?
+
+  rejectionReason String?
+
+  submittedAt DateTime?
+  reviewedAt  DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model OtpCode {
+  id     String @id @default(cuid())
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  purpose   OTPPurpose
+  codeHash  String
+  expiresAt DateTime
+  usedAt    DateTime?
+
+  createdAt DateTime @default(now())
+
+  @@index([userId, purpose])
+}
+
+model RefreshToken {
+  id          String   @id @default(cuid())
+  userId      String
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  tokenHash   String
+  revokedAt   DateTime?
+  expiresAt   DateTime
+
+  createdAt   DateTime @default(now())
+
+  @@index([userId])
 }
