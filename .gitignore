@@ -41,3 +41,5 @@ prisma/*.db-journal
 # Temporary files
 tmp/
 temp/
+
+/generated/prisma

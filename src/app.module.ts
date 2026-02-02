@@ -1,11 +1,19 @@
 import { Module, MiddlewareConsumer, NestModule } from '@nestjs/common';
-import { ConfigModule } from '@nestjs/config';
+import { ConfigModule, ConfigService } from '@nestjs/config';
+import { APP_GUARD } from '@nestjs/core';
+import { ThrottlerGuard, ThrottlerModule } from '@nestjs/throttler';
+import { RedisModule, RedisThrottlerStorage, RedisToken } from '@nestjs-redis/kit';
+
 import { HealthModule } from '@/modules/health/health.module';
 import { PrismaModule } from '@/prisma/prisma.module';
 import { LoggerMiddleware } from '@/common/interceptors/logger.middleware';
 import { appConfig } from '@/config/app.config';
 import { WalletModule } from './modules/wallet/wallet.module';
 import { WebhooksModule } from './modules/webhooks/webhooks.module';
+import { AuthModule } from './modules/auth/auth.module';
+import { UsersModule } from './modules/users/users.module';
+import { MailModule } from './modules/mail/mail.module';
+import { AppService } from './app.service';
 
 const ENV = process.env.NODE_ENV || 'development';
 
@@ -16,10 +24,53 @@ const ENV = process.env.NODE_ENV || 'development';
       load: [appConfig],
       envFilePath: [`.env.${ENV}.local`, `.env.${ENV}`, '.env.local', '.env'],
     }),
+
+    //Redis-backed throttler (Redis connection lives inside this module scope)
+    ThrottlerModule.forRootAsync({
+      imports: [
+        RedisModule.forRootAsync({
+          inject: [ConfigService],
+          useFactory: (config: ConfigService) => {
+            const host = config.get<string>('REDIS_HOST', 'localhost');
+            const port = config.get<number>('REDIS_PORT', 6379);
+            const password = config.get<string>('REDIS_PASSWORD'); // optional
+
+            const url = password
+              ? `redis://:${encodeURIComponent(password)}@${host}:${port}`
+              : `redis://${host}:${port}`;
+
+            return { options: { url } };
+          },
+        }),
+      ],
+      inject: [RedisToken(), ConfigService],
+      useFactory: (redis, config: ConfigService) => ({
+        throttlers: [
+          {
+            name: 'default',
+            ttl: config.get<number>('THROTTLE_TTL', 60_000),
+            limit: config.get<number>('THROTTLE_LIMIT', 60),
+          },
+        ],
+        storage: new RedisThrottlerStorage(redis),
+      }),
+    }),
+
     PrismaModule,
     HealthModule,
+ feature/ajoti-wallet-system
     WalletModule,
     WebhooksModule,
+    MailModule,
+    AuthModule,
+    UsersModule,
+  ],
+  providers: [
+    AppService,
+    {
+      provide: APP_GUARD,
+      useClass: ThrottlerGuard,
+    },
   ],
 })
 export class AppModule implements NestModule {
