@@ -1,0 +1,181 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ============================================================================
+// WALLET SYSTEM MODELS
+// ============================================================================
+
+// 1. Wallets (User's main wallet)
+// One wallet per user - custodial NGN wallet
+model Wallet {
+  id        String       @id @default(uuid())
+  userId    String       @unique @map("user_id")
+  currency  String       @default("NGN")
+  status    WalletStatus @default(ACTIVE)
+  createdAt DateTime     @default(now()) @map("created_at")
+  updatedAt DateTime     @updatedAt @map("updated_at")
+
+  // Relations
+  ledgerEntries LedgerEntry[]
+  buckets       WalletBucket[]
+  transactions  Transaction[]
+
+  @@map("wallets")
+}
+
+enum WalletStatus {
+  ACTIVE     // Normal operations allowed
+  RESTRICTED // Limited operations (e.g., can't withdraw)
+  SUSPENDED  // No operations allowed
+  CLOSED     // Wallet closed permanently
+}
+
+// 2. Ledger (Append-only transaction log)
+// SOURCE OF TRUTH - Balance is derived from this table
+// CRITICAL: No updates, no deletes - append-only
+model LedgerEntry {
+  id            String    @id @default(uuid())
+  walletId      String    @map("wallet_id")
+  reference     String    @unique // Idempotency key
+  entryType     EntryType @map("entry_type")
+  category      Category
+  amount        BigInt // Store in kobo (smallest unit)
+  balanceBefore BigInt    @map("balance_before")
+  balanceAfter  BigInt    @map("balance_after")
+  metadata      Json? // Additional context (provider, event IDs, etc.)
+  createdAt     DateTime  @default(now()) @map("created_at")
+
+  // Relations
+  wallet Wallet @relation(fields: [walletId], references: [id])
+
+  // Indexes for performance
+  @@index([walletId])
+  @@index([reference])
+  @@index([createdAt])
+  @@map("ledger_entries")
+}
+
+enum EntryType {
+  CREDIT  // Add money to total balance
+  DEBIT   // Remove money from total balance
+  RESERVE // Lock money (doesn't change total, only available)
+  RELEASE // Unlock money (doesn't change total, only available)
+}
+
+enum Category {
+  FUNDING    // Money added via Flutterwave
+  WITHDRAWAL // Money sent to bank account
+  ROSCA      // ROSCA circle operations
+  BUCKET     // Other bucket operations (target, fixed, remittance)
+}
+
+// 3. Wallet Buckets (Logical fund locks)
+// IMPORTANT: Buckets don't hold money - they restrict spendable balance
+// available_balance = total_balance - sum(reserved_amounts)
+model WalletBucket {
+  id             String     @id @default(uuid())
+  walletId       String     @map("wallet_id")
+  bucketType     BucketType @map("bucket_type")
+  reservedAmount BigInt     @default(0) @map("reserved_amount") // Amount locked in kobo
+  createdAt      DateTime   @default(now()) @map("created_at")
+  updatedAt      DateTime   @updatedAt @map("updated_at")
+
+  // Relations
+  wallet Wallet @relation(fields: [walletId], references: [id])
+
+  // One bucket per type per wallet
+  @@unique([walletId, bucketType])
+  @@map("wallet_buckets")
+}
+
+enum BucketType {
+  ROSCA      // ROSCA circle commitments
+  TARGET     // Savings goals
+  FIXED      // Fixed deposits
+  REMITTANCE // International transfers
+}
+
+// 4. External Transactions (Flutterwave tracking)
+// Tracks external payment provider transactions
+// NOT the source of truth - Ledger is the source of truth
+model Transaction {
+  id         String            @id @default(uuid())
+  walletId   String            @map("wallet_id")
+  provider   String            @default("FLUTTERWAVE")
+  reference  String            @unique // Flutterwave tx_ref
+  amount     BigInt // Amount in kobo
+  currency   String            @default("NGN")
+  status     TransactionStatus
+  rawPayload Json?             @map("raw_payload") // Full Flutterwave response
+  createdAt  DateTime          @default(now()) @map("created_at")
+  updatedAt  DateTime          @updatedAt @map("updated_at")
+
+  // Relations
+  wallet Wallet @relation(fields: [walletId], references: [id])
+
+  // Indexes
+  @@index([walletId])
+  @@index([reference])
+  @@index([status])
+  @@map("transactions")
+}
+
+enum TransactionStatus {
+  PENDING // Initiated, waiting for confirmation
+  SUCCESS // Confirmed successful
+  FAILED  // Failed or reversed
+}
+
+// 5. Webhook Idempotency
+// Prevents duplicate webhook processing
+// CRITICAL: Check this before processing any webhook
+model WebhookEvent {
+  id          String   @id @default(uuid())
+  provider    String // FLUTTERWAVE, etc.
+  eventId     String   @unique @map("event_id") // Provider's event ID
+  processedAt DateTime @default(now()) @map("processed_at")
+  payload     Json? // Full webhook payload for debugging
+
+  // Indexes
+  @@index([eventId])
+  @@index([provider])
+  @@map("webhook_events")
+}
+
+// ============================================================================
+// FUTURE MODELS (Coming in later phases)
+// ============================================================================
+
+// Note: These are commented out for now
+// Uncomment when implementing Phase 7 (ROSCA)
+
+// model RoscaCircle {
+//   id                 String       @id @default(uuid())
+//   name               String
+//   contributionAmount BigInt       @map("contribution_amount")
+//   frequency          String       // DAILY, WEEKLY, MONTHLY
+//   maxParticipants    Int          @map("max_participants")
+//   status             CircleStatus
+//   startDate          DateTime?    @map("start_date")
+//   createdAt          DateTime     @default(now()) @map("created_at")
+//   updatedAt          DateTime     @updatedAt @map("updated_at")
+//
+//   @@map("rosca_circles")
+// }
+
+// enum CircleStatus {
+//   DRAFT
+//   OPEN
+//   ACTIVE
+//   COMPLETED
+//   CANCELLED
+// }

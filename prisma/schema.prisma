@@ -13,6 +13,192 @@ datasource db {
   provider = "postgresql"
 }
 
+// ============================================================================
+// WALLET SYSTEM MODELS
+// ============================================================================
+
+// 1. Wallets
+// One wallet per user - custodial NGN wallet
+model Wallet {
+  id        String       @id @default(uuid())
+  userId    String       @unique @map("user_id")
+  currency  String       @default("NGN")
+  status    WalletStatus @default(ACTIVE)
+  createdAt DateTime     @default(now()) @map("created_at")
+  updatedAt DateTime     @updatedAt @map("updated_at")
+
+  // Relations
+  ledgerEntries LedgerEntry[]
+  buckets       WalletBucket[]
+  transactions  Transaction[]
+
+  @@map("wallets")
+}
+
+enum WalletStatus {
+  ACTIVE // Normal operations allowed
+  RESTRICTED // Limited operations (e.g., can't withdraw)
+  SUSPENDED // No operations allowed
+  CLOSED // Wallet closed permanently
+}
+
+// 2. Ledger (Append-only transaction log)
+// SOURCE OF TRUTH - Balance is derived from this table
+// CRITICAL: No updates, no deletes - append-only
+model LedgerEntry {
+  id            String       @id @default(uuid())
+  walletId      String       @map("wallet_id")
+  reference     String
+  entryType     EntryType    @map("entry_type")
+  movementType  MovementType @map("movement_type")
+  bucketType    BucketType?  @map("bucket_type")
+  amount        BigInt // Store in kobo (smallest unit)
+  balanceBefore BigInt       @map("balance_before")
+  balanceAfter  BigInt       @map("balance_after")
+  metadata      Json? // Additional context (provider, event IDs, etc.)
+  createdAt     DateTime     @default(now()) @map("created_at")
+  sourceType    LedgerSourceType      @map("context_type")
+  sourceId      String       @map("context_id")
+
+  // Relations
+  wallet Wallet @relation(fields: [walletId], references: [id])
+
+  @@unique([walletId, reference, sourceType, sourceId])
+  @@index([walletId, createdAt(sort: Desc)]) // Optimized for "Get Latest Balance"
+  @@index([walletId, sourceType, sourceId]) 
+  @@map("ledger_entries")
+}
+
+enum EntryType {
+  CREDIT // Add money to total balance
+  DEBIT // Remove money from total balance
+  RESERVE // Lock money (doesn't change total, only available)
+  RELEASE // Unlock money (doesn't change total, only available)
+}
+
+enum LedgerSourceType {
+  TRANSACTION // External funding or withdrawal (Flutterwave/Bank)
+  ROSCA_CIRCLE // Any movement related to ROSCA
+  TARGET_SAVINGS // Specific goal-based savings
+  FIXED_SAVINGS // Term-locked funds
+  ADMIN_ADJUSTMENT // Manual corrections or fee waivers
+  SYSTEM // Automated internal jobs (migrations, rewards)
+}
+
+enum BucketType {
+  MAIN // The unreserved/spendable balance
+  ROSCA // Main Wallet <-> ROSCA Bucket
+  TARGET // Main Wallet <-> TARGET Bucket
+  FIXED // Main Wallet <-> FIXED Bucket
+  REMITTANCE // Main Wallet <-> REMITTANCE Bucket
+}
+
+enum MovementType {
+  FUNDING // Money entering the system
+  WITHDRAWAL // Money leaving the system
+  TRANSFER      // Moving between MAIN and other buckets
+}
+
+// 3. Wallet Buckets (Logical fund locks)
+// IMPORTANT: Buckets don't hold money - they restrict spendable balance
+model WalletBucket {
+  id             String     @id @default(uuid())
+  walletId       String     @map("wallet_id")
+  bucketType     BucketType @map("bucket_type")
+  sourceId       String    @map("source_id")
+  reservedAmount BigInt     @default(0) @map("reserved_amount") // Amount locked in kobo
+  createdAt      DateTime   @default(now()) @map("created_at")
+  updatedAt      DateTime   @updatedAt @map("updated_at")
+
+  // Relations
+  wallet Wallet @relation(fields: [walletId], references: [id])
+
+  // One bucket per type per wallet
+  @@unique([walletId, bucketType, sourceId])
+  @@map("wallet_buckets")
+}
+
+// 4. External Transactions (Flutterwave tracking) 
+model Transaction {
+  id         String            @id @default(uuid())
+  walletId   String            @map("wallet_id")
+  provider   String            @default("FLUTTERWAVE")
+  reference  String            @unique // Flutterwave tx_ref
+  amount     BigInt // Amount in kobo
+  currency   String            @default("NGN")
+  status     TransactionStatus
+  type       TransactionType   @map("transaction_type")
+  metadata    Json?             // Provider-specific data
+  completedAt DateTime?         @map("completed_at")
+  createdAt  DateTime          @default(now()) @map("created_at")
+  updatedAt  DateTime          @updatedAt @map("updated_at")
+
+  // Relations
+  wallet Wallet @relation(fields: [walletId], references: [id])
+
+  // Indexes
+  @@index([walletId])
+  @@index([reference])
+  @@index([status])
+  @@index([type])
+  @@map("transactions")
+}
+
+enum TransactionType {
+  FUNDING      // Money coming in (Flutterwave → Wallet)
+  WITHDRAWAL   // Money going out (Wallet → Bank)
+}
+
+enum TransactionStatus {
+  PENDING // Initiated, waiting for confirmation
+  SUCCESS // Confirmed successful
+  FAILED // Failed or reversed
+}
+
+// 5. Webhook Idempotency
+// Prevents duplicate webhook processing
+// CRITICAL: Check this before processing any webhook
+model WebhookEvent {
+  id          String   @id @default(uuid())
+  provider    String // FLUTTERWAVE, etc.
+  eventId     String   @unique @map("event_id") // Provider's event ID
+  processedAt DateTime @default(now()) @map("processed_at")
+  payload     Json? // Full webhook payload for debugging
+
+  // Indexes
+  @@index([eventId])
+  @@index([provider])
+  @@map("webhook_events")
+}
+
+// ============================================================================
+// FUTURE MODELS (Coming in later phases)
+// ============================================================================
+
+// Note: These are commented out for now
+// Uncomment when implementing Phase 7 (ROSCA)
+
+// model RoscaCircle {
+//   id                 String       @id @default(uuid())
+//   name               String
+//   contributionAmount BigInt       @map("contribution_amount")
+//   frequency          String       // DAILY, WEEKLY, MONTHLY
+//   maxParticipants    Int          @map("max_participants")
+//   status             CircleStatus
+//   startDate          DateTime?    @map("start_date")
+//   createdAt          DateTime     @default(now()) @map("created_at")
+//   updatedAt          DateTime     @updatedAt @map("updated_at")
+//
+//   @@map("rosca_circles")
+// }
+
+// enum CircleStatus {
+//   DRAFT
+//   OPEN
+//   ACTIVE
+//   COMPLETED
+//   CANCELLED
+// }
 enum Role {
   MEMBER
   ADMIN
