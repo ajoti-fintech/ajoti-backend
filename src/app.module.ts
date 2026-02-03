@@ -61,7 +61,7 @@ const ENV = process.env.NODE_ENV || 'development';
 
     PrismaModule,
     HealthModule,
- feature/ajoti-wallet-system
+    //  feature/ajoti-wallet-system
     WalletModule,
     WebhooksModule,
     MailModule,
