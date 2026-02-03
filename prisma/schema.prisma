@@ -11,6 +11,7 @@ generator client {
 
 datasource db {
   provider = "postgresql"
+  url      = env("DATABASE_URL")
 }
 
 // ============================================================================
@@ -22,6 +23,7 @@ datasource db {
 model Wallet {
   id        String       @id @default(uuid())
   userId    String       @unique @map("user_id")
+  user      User     @relation(fields: [userId], references: [id])
   currency  String       @default("NGN")
   status    WalletStatus @default(ACTIVE)
   createdAt DateTime     @default(now()) @map("created_at")
@@ -232,6 +234,7 @@ model User {
   gender    Gender
   phone     String
   role      Role     @default(MEMBER)
+  wallet    Wallet?
 
   isVerified Boolean @default(false)
 
