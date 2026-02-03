@@ -1,6 +1,6 @@
 import { Test, TestingModule } from '@nestjs/testing';
-import { LedgerService } from '../ledger.service';
-import { PrismaService } from '../../../prisma/prisma.service';
+import { LedgerService } from './ledger.service';
+import { PrismaService } from '../../prisma/prisma.service';
 import { BadRequestException } from '@nestjs/common';
 import { EntryType, MovementType, BucketType, LedgerSourceType, Prisma } from '@prisma/client';
 

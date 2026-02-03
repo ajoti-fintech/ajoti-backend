@@ -4,6 +4,7 @@ import { WalletController } from './wallet.controller';
 import { WalletAdminController } from './wallet.controller'; // ← Add import
 import { PrismaModule } from '../../prisma/prisma.module';
 import { LedgerModule } from '../ledger/ledger.module';
+import { RolesGuard } from '../auth/guards/roles.guard';
 
 @Module({
   imports: [PrismaModule, LedgerModule],
@@ -12,7 +13,7 @@ import { LedgerModule } from '../ledger/ledger.module';
     WalletAdminController,
     // WalletAdminController will be added here later
   ],
-  providers: [WalletService],
+  providers: [WalletService, RolesGuard],
   exports: [WalletService],
 })
 export class WalletModule {}

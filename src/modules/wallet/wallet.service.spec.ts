@@ -1,7 +1,7 @@
 import { Test, TestingModule } from '@nestjs/testing';
-import { WalletService } from '../wallet.service';
-import { LedgerService } from '../../ledger/ledger.service';
-import { PrismaService } from '../../../prisma/prisma.service';
+import { WalletService } from './wallet.service';
+import { LedgerService } from '../ledger/ledger.service';
+import { PrismaService } from '../../prisma/prisma.service';
 
 describe('WalletService', () => {
   let service: WalletService;

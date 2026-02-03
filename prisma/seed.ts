@@ -1,20 +1,8 @@
 import { PrismaClient, Role } from '@prisma/client';
 import { hashValue } from '../src/common/security/hash';
-import { PrismaPg } from '@prisma/adapter-pg';
-import { Pool } from 'pg';
 import 'dotenv/config';
 
-function makePrisma() {
-  const connectionString = process.env.DATABASE_URL;
-  if (!connectionString) throw new Error('DATABASE_URL is missing');
-
-  const pool = new Pool({ connectionString });
-  return new PrismaClient({
-    adapter: new PrismaPg(pool),
-  });
-}
-
-const prisma = makePrisma();
+const prisma = new PrismaClient();
 
 async function main() {
   const email = process.env.SUPERADMIN_EMAIL;

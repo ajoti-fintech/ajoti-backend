@@ -21,13 +21,15 @@ import {
   WalletBalanceNairaDto,
 } from './dto/wallet.dto';
 import { LedgerService } from '../ledger/ledger.service';
-// Assuming a standard Auth Guard and CurrentUser decorator exist
-// import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
+import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
+import { CurrentUser } from '@/common/decorators/current-user.decorator';
+import { Roles } from '../auth/roles.decorator';
+import { RolesGuard } from '../auth/guards/roles.guard';
 
 @ApiTags('Wallet')
 @Controller('wallet')
-// @UseGuards(AuthGuard)
-@ApiBearerAuth()
+@UseGuards(JwtAuthGuard)
+@ApiBearerAuth('access-token')
 export class WalletController {
   constructor(
     private readonly walletService: WalletService,
@@ -42,7 +44,7 @@ export class WalletController {
       'Retrieve the authenticated user wallet. Creates a new wallet if one does not exist.',
   })
   @ApiResponse({ status: 200, type: WalletWithBalanceResponseDto })
-  async getWallet(@Query('id') userId: string) {
+  async getWallet(@CurrentUser('userId') userId: string) {
     const walletWithBalance = await this.walletService.getWalletWithBalance(userId);
     return {
       success: true,
@@ -55,7 +57,7 @@ export class WalletController {
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Get wallet balance (kobo)' })
   @ApiResponse({ status: 200, type: ApiResponseDto<WalletBalanceResponseDto> })
-  async getBalance(@Query('id') userId: string) {
+  async getBalance(@CurrentUser('userId') userId: string) {
     const wallet = await this.walletService.getOrCreateWallet(userId);
     const balance = await this.walletService.getBalance(wallet.id);
 
@@ -70,7 +72,7 @@ export class WalletController {
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Get wallet balance (Naira)' })
   @ApiResponse({ status: 200, type: ApiResponseDto<WalletBalanceNairaDto> })
-  async getBalanceNaira(@Query('id') userId: string) {
+  async getBalanceNaira(@CurrentUser('userId') userId: string) {
     const wallet = await this.walletService.getOrCreateWallet(userId);
     const balance = await this.walletService.getBalance(wallet.id);
 
@@ -85,7 +87,7 @@ export class WalletController {
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Get wallet buckets' })
   @ApiResponse({ status: 200, type: [WalletBucketResponseDto] })
-  async getBuckets(@Query('id') userId: string) {
+  async getBuckets(@CurrentUser('userId') userId: string) {
     const wallet = await this.walletService.getOrCreateWallet(userId);
     const buckets = await this.walletService.getWalletBuckets(wallet.id);
 
@@ -111,7 +113,7 @@ export class WalletController {
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Get wallet statistics' })
   @ApiResponse({ status: 200 })
-  async getStats(@Query('id') userId: string) {
+  async getStats(@CurrentUser('userId') userId: string) {
     const wallet = await this.walletService.getOrCreateWallet(userId);
     const stats = await this.walletService.getWalletStats(wallet.id);
 
@@ -125,7 +127,7 @@ export class WalletController {
   @Get('status')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Check wallet status' })
-  async getStatus(@Query('id') userId: string) {
+  async getStatus(@CurrentUser('userId') userId: string) {
     const wallet = await this.walletService.getOrCreateWallet(userId);
     const isActive = await this.walletService.isWalletActive(wallet.id);
     const canWithdraw = await this.walletService.canWithdraw(wallet.id);
@@ -146,7 +148,7 @@ export class WalletController {
   @Get('balance/check/:amount')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Check sufficient balance' })
-  async checkBalance(@Query('id') userId: string, @Param('amount') amount: string) {
+  async checkBalance(@CurrentUser('userId') userId: string, @Param('amount') amount: string) {
     // Defensive check for BigInt parsing
     if (!/^\d+$/.test(amount)) {
       throw new BadRequestException('Amount must be a positive numeric string (kobo)');
@@ -179,7 +181,7 @@ export class WalletController {
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Get transaction history' })
   async getTransactions(
-    @Query('userId') userId: string,
+    @CurrentUser('userId') userId: string,
     @Query('limit') limit?: string,
     @Query('offset') offset?: string,
   ) {
@@ -211,7 +213,9 @@ export class WalletController {
  */
 @ApiTags('Wallet Admin')
 @Controller('admin/wallet')
-@ApiBearerAuth()
+@UseGuards(JwtAuthGuard, RolesGuard)
+@Roles('ADMIN', 'SUPERADMIN')
+@ApiBearerAuth('access-token')
 export class WalletAdminController {
   constructor(private readonly walletService: WalletService) {}
 
