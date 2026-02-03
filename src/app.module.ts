@@ -14,6 +14,9 @@ import { AuthModule } from './modules/auth/auth.module';
 import { UsersModule } from './modules/users/users.module';
 import { MailModule } from './modules/mail/mail.module';
 import { AppService } from './app.service';
+import { KycController } from './modules/kyc/kyc.controller';
+import { KycService } from './modules/kyc/kyc.service';
+import { KycModule } from './modules/kyc/kyc.module';
 
 const ENV = process.env.NODE_ENV || 'development';
 
@@ -58,11 +61,13 @@ const ENV = process.env.NODE_ENV || 'development';
 
     PrismaModule,
     HealthModule,
+    //  feature/ajoti-wallet-system
     WalletModule,
     WebhooksModule,
     MailModule,
     AuthModule,
     UsersModule,
+    KycModule,
   ],
   providers: [
     AppService,
@@ -70,7 +75,9 @@ const ENV = process.env.NODE_ENV || 'development';
       provide: APP_GUARD,
       useClass: ThrottlerGuard,
     },
+    KycService,
   ],
+  controllers: [KycController],
 })
 export class AppModule implements NestModule {
   configure(consumer: MiddlewareConsumer) {
