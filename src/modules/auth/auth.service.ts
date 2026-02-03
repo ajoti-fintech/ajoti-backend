@@ -96,12 +96,13 @@ export class AuthService {
       select: { id: true, email: true },
     });
 
-    await this.sendOtp(registerDto.email, OTPPurpose.VERIFICATION);
+    const fullName = `${registerDto.firstName} ${registerDto.lastName}`;
+    await this.sendOtp(registerDto.email, OTPPurpose.VERIFICATION, fullName);
 
     return { message: 'Registered, OTP sent to mail', userId: user.id };
   }
 
-  async sendOtp(email: string, purpose: OTPPurpose) {
+  async sendOtp(email: string, purpose: OTPPurpose, fullName: string) {
     const user = await this.prisma.user.findUnique({ where: { email } });
     if (!user) throw new BadRequestException('User not found');
 
@@ -128,8 +129,8 @@ export class AuthService {
     const otpMinutes = Number(this.config.get<string>('OTP_EXPIRES_MINUTES') || '10');
     const html =
       purpose === OTPPurpose.VERIFICATION
-        ? verificationOtpTemplate(otp, otpMinutes)
-        : resetPasswordOtpTemplate(otp, otpMinutes);
+        ? verificationOtpTemplate(otp, otpMinutes, fullName)
+        : resetPasswordOtpTemplate(otp, otpMinutes, fullName);
 
     try {
       await this.mail.send(user.email, subject, html);
@@ -172,12 +173,15 @@ export class AuthService {
   async resendVerificationOtp(email: string) {
     const user = await this.prisma.user.findUnique({
       where: { email },
-      select: { id: true, isVerified: true },
+      select: { id: true, isVerified: true, firstName: true, lastName: true },
     });
 
     if (!user) return;
 
     if (user.isVerified) throw new BadRequestException('Email already verified');
+
+    const fullName = `${user.firstName} ${user.lastName}`;
+    await this.sendOtp(email, OTPPurpose.VERIFICATION, fullName);
 
     // const cooldownSeconds = 60;
     // const last = await this.prisma.otpCode.findFirst({
@@ -192,19 +196,20 @@ export class AuthService {
     //     throw new TooManyRequestsException('Wait 30 seconds then try again');
     //   }
     // }
-
-    await this.sendOtp(email, OTPPurpose.VERIFICATION);
   }
 
   async resendResetPasswordOtp(email: string) {
     const user = await this.prisma.user.findUnique({
       where: { email },
-      select: { id: true, isVerified: true },
+      select: { id: true, isVerified: true, firstName: true, lastName: true },
     });
 
     if (!user) return;
 
     if (user.isVerified) throw new BadRequestException('Email already verified');
+
+    const fullName = `${user.firstName} ${user.lastName}`;
+    await this.sendOtp(email, OTPPurpose.RESET_PASSWORD, fullName);
 
     // const cooldownSeconds = 60;
     // const last = await this.prisma.otpCode.findFirst({
@@ -219,8 +224,6 @@ export class AuthService {
     //     throw new TooManyRequestsException('Wait 30 seconds then try again');
     //   }
     // }
-
-    await this.sendOtp(email, OTPPurpose.RESET_PASSWORD);
   }
 
   async verifyEmail(verifyEmailDto: VerifyEmailDto) {
@@ -273,7 +276,11 @@ export class AuthService {
   async forgotPassword(forgotPasswordDto: ForgotPasswordDto) {
     // don’t leak whether email exists (optional)
     const user = await this.prisma.user.findUnique({ where: { email: forgotPasswordDto.email } });
-    if (user) await this.sendOtp(forgotPasswordDto.email, OTPPurpose.RESET_PASSWORD);
+
+    if (user) {
+      const fullName = `${user.firstName} ${user.lastName}`;
+      await this.sendOtp(forgotPasswordDto.email, OTPPurpose.RESET_PASSWORD, fullName);
+    }
 
     return { message: 'If the email exists, an OTP has been sent.' };
   }

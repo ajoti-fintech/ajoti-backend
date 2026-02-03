@@ -219,6 +219,12 @@ enum KYCStatus {
   REJECTED
 }
 
+enum KYCStep {
+  NIN_REQUIRED
+  BVN_REQUIRED
+  NOK_REQUIRED
+  SUBMITTED
+}
 enum Gender {
   MALE
   FEMALE
@@ -260,28 +266,34 @@ model UserProfile {
 }
 
 model KYC {
-  id     String @id @default(cuid())
+  id     String @id @default(uuid())
   userId String @unique
   user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  // workflow control
+  status    KYCStatus @default(NOT_SUBMITTED)
+  step      KYCStep   @default(NIN_REQUIRED)
 
-  status      KYCStatus @default(NOT_SUBMITTED)
-  docType     String?
-  docNumber   String?
-  docFrontUrl String?
-  docBackUrl  String?
-  selfieUrl   String?
+  // NIN/BVN
+  nin       String?
+  bvn       String?
+
+  ninVerifiedAt DateTime?
+  bvnVerifiedAt DateTime?
+
+  // Next of Kin
+  nextOfKinName         String?
+  nextOfKinRelationship String?
 
   rejectionReason String?
-
   submittedAt DateTime?
   reviewedAt  DateTime?
-
+  
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 }
 
 model OtpCode {
-  id     String @id @default(cuid())
+  id     String @id @default(uuid())
   userId String
   user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
 
@@ -296,7 +308,7 @@ model OtpCode {
 }
 
 model RefreshToken {
-  id          String   @id @default(cuid())
+  id          String   @id @default(uuid())
   userId      String
   user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
 
