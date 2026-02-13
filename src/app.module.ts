@@ -1,7 +1,7 @@
 import { Module, MiddlewareConsumer, NestModule } from '@nestjs/common';
 import { ConfigModule, ConfigService } from '@nestjs/config';
 import { APP_GUARD } from '@nestjs/core';
-import { ThrottlerGuard, ThrottlerModule } from '@nestjs/throttler';
+import { ThrottlerModule } from '@nestjs/throttler';
 import { RedisModule, RedisThrottlerStorage, RedisToken } from '@nestjs-redis/kit';
 
 import { HealthModule } from '@/modules/health/health.module';
@@ -17,6 +17,7 @@ import { AppService } from './app.service';
 import { KycController } from './modules/kyc/kyc.controller';
 import { KycService } from './modules/kyc/kyc.service';
 import { KycModule } from './modules/kyc/kyc.module';
+import { UserIdThrottlerGuard } from './guard/userid-throttler.guard';
 
 const ENV = process.env.NODE_ENV || 'development';
 
@@ -52,7 +53,7 @@ const ENV = process.env.NODE_ENV || 'development';
           {
             name: 'default',
             ttl: config.get<number>('THROTTLE_TTL', 60_000),
-            limit: config.get<number>('THROTTLE_LIMIT', 60),
+            limit: config.get<number>('THROTTLE_LIMIT', 100),
           },
         ],
         storage: new RedisThrottlerStorage(redis),
@@ -62,18 +63,18 @@ const ENV = process.env.NODE_ENV || 'development';
     PrismaModule,
     HealthModule,
     //  feature/ajoti-wallet-system
-    WalletModule,
-    WebhooksModule,
-    MailModule,
     AuthModule,
     UsersModule,
     KycModule,
+    WalletModule,
+    WebhooksModule,
+    MailModule,
   ],
   providers: [
     AppService,
     {
       provide: APP_GUARD,
-      useClass: ThrottlerGuard,
+      useClass: UserIdThrottlerGuard,
     },
     KycService,
   ],

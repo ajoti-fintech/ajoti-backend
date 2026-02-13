@@ -22,7 +22,7 @@ datasource db {
 model Wallet {
   id        String       @id @default(uuid())
   userId    String       @unique @map("user_id")
-  user      User     @relation(fields: [userId], references: [id])
+  user      User         @relation(fields: [userId], references: [id])
   currency  String       @default("NGN")
   status    WalletStatus @default(ACTIVE)
   createdAt DateTime     @default(now()) @map("created_at")
@@ -47,26 +47,26 @@ enum WalletStatus {
 // SOURCE OF TRUTH - Balance is derived from this table
 // CRITICAL: No updates, no deletes - append-only
 model LedgerEntry {
-  id            String       @id @default(uuid())
-  walletId      String       @map("wallet_id")
+  id            String           @id @default(uuid())
+  walletId      String           @map("wallet_id")
   reference     String
-  entryType     EntryType    @map("entry_type")
-  movementType  MovementType @map("movement_type")
-  bucketType    BucketType?  @map("bucket_type")
+  entryType     EntryType        @map("entry_type")
+  movementType  MovementType     @map("movement_type")
+  bucketType    BucketType?      @map("bucket_type")
   amount        BigInt // Store in kobo (smallest unit)
-  balanceBefore BigInt       @map("balance_before")
-  balanceAfter  BigInt       @map("balance_after")
+  balanceBefore BigInt           @map("balance_before")
+  balanceAfter  BigInt           @map("balance_after")
   metadata      Json? // Additional context (provider, event IDs, etc.)
-  createdAt     DateTime     @default(now()) @map("created_at")
-  sourceType    LedgerSourceType      @map("context_type")
-  sourceId      String       @map("context_id")
+  createdAt     DateTime         @default(now()) @map("created_at")
+  sourceType    LedgerSourceType @map("context_type")
+  sourceId      String           @map("context_id")
 
   // Relations
   wallet Wallet @relation(fields: [walletId], references: [id])
 
   @@unique([walletId, reference, sourceType, sourceId])
   @@index([walletId, createdAt(sort: Desc)]) // Optimized for "Get Latest Balance"
-  @@index([walletId, sourceType, sourceId]) 
+  @@index([walletId, sourceType, sourceId])
   @@map("ledger_entries")
 }
 
@@ -97,7 +97,7 @@ enum BucketType {
 enum MovementType {
   FUNDING // Money entering the system
   WITHDRAWAL // Money leaving the system
-  TRANSFER      // Moving between MAIN and other buckets
+  TRANSFER // Moving between MAIN and other buckets
 }
 
 // 3. Wallet Buckets (Logical fund locks)
@@ -106,7 +106,7 @@ model WalletBucket {
   id             String     @id @default(uuid())
   walletId       String     @map("wallet_id")
   bucketType     BucketType @map("bucket_type")
-  sourceId       String    @map("source_id")
+  sourceId       String     @map("source_id")
   reservedAmount BigInt     @default(0) @map("reserved_amount") // Amount locked in kobo
   createdAt      DateTime   @default(now()) @map("created_at")
   updatedAt      DateTime   @updatedAt @map("updated_at")
@@ -121,18 +121,18 @@ model WalletBucket {
 
 // 4. External Transactions (Flutterwave tracking) 
 model Transaction {
-  id         String            @id @default(uuid())
-  walletId   String            @map("wallet_id")
-  provider   String            @default("FLUTTERWAVE")
-  reference  String            @unique // Flutterwave tx_ref
-  amount     BigInt // Amount in kobo
-  currency   String            @default("NGN")
-  status     TransactionStatus
-  type       TransactionType   @map("transaction_type")
-  metadata    Json?             // Provider-specific data
+  id          String            @id @default(uuid())
+  walletId    String            @map("wallet_id")
+  provider    String            @default("FLUTTERWAVE")
+  reference   String            @unique // Flutterwave tx_ref
+  amount      BigInt // Amount in kobo
+  currency    String            @default("NGN")
+  status      TransactionStatus
+  type        TransactionType   @map("transaction_type")
+  metadata    Json? // Provider-specific data
   completedAt DateTime?         @map("completed_at")
-  createdAt  DateTime          @default(now()) @map("created_at")
-  updatedAt  DateTime          @updatedAt @map("updated_at")
+  createdAt   DateTime          @default(now()) @map("created_at")
+  updatedAt   DateTime          @updatedAt @map("updated_at")
 
   // Relations
   wallet Wallet @relation(fields: [walletId], references: [id])
@@ -146,8 +146,8 @@ model Transaction {
 }
 
 enum TransactionType {
-  FUNDING      // Money coming in (Flutterwave → Wallet)
-  WITHDRAWAL   // Money going out (Wallet → Bank)
+  FUNDING // Money coming in (Flutterwave → Wallet)
+  WITHDRAWAL // Money going out (Wallet → Bank)
 }
 
 enum TransactionStatus {
@@ -224,6 +224,7 @@ enum KYCStep {
   NOK_REQUIRED
   SUBMITTED
 }
+
 enum Gender {
   MALE
   FEMALE
@@ -246,8 +247,8 @@ model User {
   profile UserProfile?
   kyc     KYC?
 
-  refreshTokens  RefreshToken[]
-  otps OtpCode[]
+  refreshTokens RefreshToken[]
+  otps          OtpCode[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -265,30 +266,37 @@ model UserProfile {
 }
 
 model KYC {
-  id     String @id @default(uuid())
-  userId String @unique
-  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  id     String    @id @default(uuid())
+  userId String    @unique
+  user   User      @relation(fields: [userId], references: [id], onDelete: Cascade)
   // workflow control
-  status    KYCStatus @default(NOT_SUBMITTED)
-  step      KYCStep   @default(NIN_REQUIRED)
+  status KYCStatus @default(NOT_SUBMITTED)
+  step   KYCStep   @default(NIN_REQUIRED)
 
   // NIN/BVN
-  nin       String?
-  bvn       String?
+  nin String? @db.VarChar(11)
+  bvn String? @db.VarChar(11)
 
   ninVerifiedAt DateTime?
   bvnVerifiedAt DateTime?
 
   // Next of Kin
-  nextOfKinName         String?
-  nextOfKinRelationship String?
+  nextOfKinName         String? @db.VarChar(255)
+  nextOfKinRelationship String? @db.VarChar(255)
+  nextOfKinPhone        String? @db.VarChar(20)
 
-  rejectionReason String?
-  submittedAt DateTime?
-  reviewedAt  DateTime?
-  
+  rejectionReason String?   @db.Text
+  submittedAt     DateTime?
+  reviewedAt      DateTime?
+  reviewedBy      String?
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+
+  @@index([status])
+  @@index([step])
+  @@index([userId, status])
+  @@map("kyc")
 }
 
 model OtpCode {
@@ -307,15 +315,15 @@ model OtpCode {
 }
 
 model RefreshToken {
-  id          String   @id @default(uuid())
-  userId      String
-  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  id     String @id @default(uuid())
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
 
-  tokenHash   String
-  revokedAt   DateTime?
-  expiresAt   DateTime
+  tokenHash String
+  revokedAt DateTime?
+  expiresAt DateTime
 
-  createdAt   DateTime @default(now())
+  createdAt DateTime @default(now())
 
   @@index([userId])
 }
