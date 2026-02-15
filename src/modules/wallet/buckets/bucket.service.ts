@@ -90,10 +90,7 @@ export class BucketService {
     switch (type) {
       case BucketType.ROSCA:
         return LedgerSourceType.ROSCA_CIRCLE;
-      case BucketType.TARGET:
-        return LedgerSourceType.TARGET_SAVINGS;
-      case BucketType.FIXED:
-        return LedgerSourceType.FIXED_SAVINGS;
+
       default:
         return LedgerSourceType.SYSTEM;
     }

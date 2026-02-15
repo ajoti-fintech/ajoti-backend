@@ -36,19 +36,20 @@ async function bootstrap() {
     .setDescription('API documentation for the Ajoti backend service')
     .setVersion('1.0')
     .addBearerAuth(
-      { 
-        type: 'http', 
-        scheme: 'bearer', 
-        bearerFormat: 'JWT', 
-        name: 'Authorization', 
-        description: 'Enter JWT token', 
-        in: 'header' ,},
-        'access-token',
+      {
+        type: 'http',
+        scheme: 'bearer',
+        bearerFormat: 'JWT',
+        name: 'Authorization',
+        description: 'Enter JWT token',
+        in: 'header',
+      },
+      'access-token',
     )
     .build();
 
-    const document = SwaggerModule.createDocument(app, options);
-    SwaggerModule.setup('api/docs', app, document);
+  const document = SwaggerModule.createDocument(app, options);
+  SwaggerModule.setup('api/docs', app, document);
 
   const port = configService.get<number>('PORT', 3000);
   await app.listen(port);

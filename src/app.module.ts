@@ -17,6 +17,10 @@ import { AppService } from './app.service';
 import { KycController } from './modules/kyc/kyc.controller';
 import { KycService } from './modules/kyc/kyc.service';
 import { KycModule } from './modules/kyc/kyc.module';
+import { RoscaModule } from './modules/rosca/rosca.module';
+import { ContributionModule } from './modules/contribution/contribution.module';
+import { PayoutModule } from './modules/payout/payout.module';
+import { TrustModule } from './modules/trust/trust.module';
 
 const ENV = process.env.NODE_ENV || 'development';
 
@@ -68,6 +72,10 @@ const ENV = process.env.NODE_ENV || 'development';
     AuthModule,
     UsersModule,
     KycModule,
+    RoscaModule,
+    ContributionModule,
+    PayoutModule,
+    TrustModule,
   ],
   providers: [
     AppService,
