@@ -1,65 +1,96 @@
+// src/modules/webhooks/webhooks.controller.ts
 import {
   Controller,
   Post,
-  Body,
   Headers,
-  UnauthorizedException,
+  Req,
+  Body,
   HttpCode,
   HttpStatus,
   Logger,
+  BadRequestException,
 } from '@nestjs/common';
+import { ApiExcludeEndpoint, ApiTags } from '@nestjs/swagger';
+import { Request } from 'express';
 import { WebhooksService } from './webhooks.service';
-import { ApiTags, ApiOperation, ApiExcludeEndpoint } from '@nestjs/swagger';
-import { ConfigService } from '@nestjs/config';
+import { FlutterwaveWebhookDto } from './dto/flutterwave-webhook.dto';
+import { FlutterwaveService } from '../transactions/flutterwave.service';
+import { TransactionsService } from '../transactions/transactions.service';
+
+interface RequestWithRawBody extends Request {
+  rawBody?: Buffer;
+}
 
 @ApiTags('Webhooks')
 @Controller('webhooks')
 export class WebhooksController {
   private readonly logger = new Logger(WebhooksController.name);
+
   constructor(
     private readonly webhooksService: WebhooksService,
-    private readonly configService: ConfigService,
+    private readonly transactionsService: TransactionsService,
+    private readonly flutterwave: FlutterwaveService,
   ) {}
 
   @Post('flutterwave')
   @HttpCode(HttpStatus.OK)
-  @ApiExcludeEndpoint() // ✅ Hide from Swagger (external endpoint)
-  @ApiOperation({ summary: 'Handle Flutterwave Webhook' })
-  async handleFlutterwave(@Body() payload: any, @Headers('verif-hash') signature: string) {
+  @ApiExcludeEndpoint()
+  async handleFlutterwave(
+    @Headers('verif-hash') signature: string,
+    @Req() req: RequestWithRawBody,
+    @Body() payload: FlutterwaveWebhookDto,
+  ) {
+    const txRef = payload.data?.tx_ref || 'unknown';
+    this.logger.log(`Flutterwave webhook: ${payload.event} / ${txRef}`);
+
     try {
-      // 1. Verify Signature
-      const secretHash = this.configService.get<string>('FLW_WEBHOOK_HASH');
+      if (!signature) throw new BadRequestException('Missing verif-hash header');
 
-      if (!secretHash) {
-        this.logger.error('FLW_WEBHOOK_HASH not configured');
-        throw new UnauthorizedException('Webhook configuration error');
+      if (!req.rawBody) throw new Error('Raw body missing - check main.ts');
+
+      const rawBodyStr = req.rawBody.toString('utf8');
+      const verification = this.flutterwave.verifyWebhook(rawBodyStr, signature);
+
+      if (!verification.valid) {
+        this.logger.warn(`Invalid signature for ${txRef}`);
+        return { status: 'ignored', reason: 'signature_mismatch' };
       }
 
-      if (!signature || signature !== secretHash) {
-        this.logger.warn(`Invalid webhook signature. Received: ${signature}`);
-        throw new UnauthorizedException('Invalid webhook signature');
+      // Record webhook first (idempotency)
+      const webhookRecord = await this.webhooksService.recordWebhook(
+        'FLUTTERWAVE',
+        payload.data.id,
+        payload,
+      );
+
+      if (!webhookRecord) {
+        return { status: 'already_processed' };
       }
 
-      // 2. Log incoming webhook
-      this.logger.log(`Received Flutterwave webhook: ${payload.event} - ${payload.data?.id}`);
-
-      // 3. Process
-      await this.webhooksService.processFundingWebhook(payload);
-
-      return { status: 'success', message: 'Webhook processed' };
-    } catch (error) {
-      this.logger.error(`Webhook processing failed: ${error.message}`, error.stack);
-
-      // ✅ Still return 200 to prevent retries for validation errors
-      if (error instanceof UnauthorizedException) {
-        throw error; // Return 401
+      // Route to appropriate handler
+      if (payload.event === 'charge.completed') {
+        if (payload.data.status === 'successful') {
+          await this.transactionsService.finalizeSettlement({
+            reference: payload.data.tx_ref, // Mapping tx_ref to reference
+            providerId: String(payload.data.id), // Mapping id to providerId
+            receivedAmountNaira: payload.data.amount, // Mapping amount to receivedAmountNaira
+            providerName: 'FLUTTERWAVE',
+            webhookPayload: payload, // Passing the full payload for audit
+          });
+        } else {
+          await this.transactionsService.markAsFailed(
+            payload.data.tx_ref,
+            `Payment failed: ${payload.data.status || 'unknown reason'}`,
+          );
+        }
+      } else {
+        this.logger.warn(`Unhandled event: ${payload.event}`);
       }
 
-      // Log error but return 200 (prevents Flutterwave retries)
-      return {
-        status: 'error',
-        message: 'Webhook received but processing failed',
-      };
+      return { status: 'success' };
+    } catch (error: any) {
+      this.logger.error(`Webhook error for ${txRef}`, error.stack);
+      return { status: 'error', message: 'Received' };
     }
   }
 }
