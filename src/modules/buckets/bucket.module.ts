@@ -1,6 +1,6 @@
 import { Module } from '@nestjs/common';
-import { PrismaService } from '../../../prisma/prisma.service';
-import { LedgerModule } from '../../ledger/ledger.module';
+import { PrismaService } from '../../prisma/prisma.service';
+import { LedgerModule } from '../ledger/ledger.module';
 import { BucketService } from './bucket.service';
 
 @Module({

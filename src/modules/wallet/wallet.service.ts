@@ -5,7 +5,7 @@ import {
   BadRequestException,
 } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
-import { Wallet, WalletStatus, Prisma, BucketType } from '@prisma/client';
+import { Wallet, WalletStatus } from '@prisma/client';
 import { LedgerService } from '../ledger/ledger.service';
 import { WalletBalanceResponseDto, formatBalanceResponse } from './dto/wallet.dto';
 
@@ -61,6 +61,16 @@ export class WalletService {
     if (wallet) return wallet;
 
     return this.createWallet(userId);
+  }
+
+  /**
+   * Finds a wallet by userId.
+   * Use this when you don't want to trigger "getOrCreate" side effects.
+   */
+  async findByUserId(userId: string): Promise<Wallet | null> {
+    return await this.prisma.wallet.findUnique({
+      where: { userId },
+    });
   }
 
   async getWalletById(walletId: string): Promise<Wallet> {

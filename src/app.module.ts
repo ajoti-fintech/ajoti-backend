@@ -18,6 +18,12 @@ import { KycController } from './modules/kyc/kyc.controller';
 import { KycService } from './modules/kyc/kyc.service';
 import { KycModule } from './modules/kyc/kyc.module';
 import { UserIdThrottlerGuard } from './guard/userid-throttler.guard';
+import { RoscaModule } from './modules/rosca/rosca.module';
+import { ContributionModule } from './modules/contribution/contribution.module';
+import { PayoutModule } from './modules/payout/payout.module';
+import { TrustModule } from './modules/trust/trust.module';
+import { TransactionsModule } from './modules/transactions/transactions.module';
+import { ScheduleModule } from '@nestjs/schedule';
 
 const ENV = process.env.NODE_ENV || 'development';
 
@@ -32,6 +38,7 @@ const ENV = process.env.NODE_ENV || 'development';
     //Redis-backed throttler (Redis connection lives inside this module scope)
     ThrottlerModule.forRootAsync({
       imports: [
+        ScheduleModule.forRoot(),
         RedisModule.forRootAsync({
           inject: [ConfigService],
           useFactory: (config: ConfigService) => {
@@ -69,6 +76,11 @@ const ENV = process.env.NODE_ENV || 'development';
     WalletModule,
     WebhooksModule,
     MailModule,
+    RoscaModule,
+    ContributionModule,
+    PayoutModule,
+    TrustModule,
+    TransactionsModule,
   ],
   providers: [
     AppService,
