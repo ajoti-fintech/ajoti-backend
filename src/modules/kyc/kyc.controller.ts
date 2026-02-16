@@ -87,12 +87,12 @@ export class KycController {
   }
 
   // SUPERADMIN ENDPOINTS
-  @Patch('superadmin/approve/:userId')
+  @Patch('approve/:userId')
   @Throttle({ default: { ttl: 600_000, limit: 30 } }) // 30/10min
   @UseGuards(RolesGuard)
   @Roles('SUPERADMIN')
   @HttpCode(HttpStatus.OK)
-  @ApiOperation({ summary: 'Admin: Approve KYC' })
+  @ApiOperation({ summary: 'Super-Admin: Approve KYC' })
   @ApiResponse({ status: 200, description: 'KYC approved successfully' })
   @ApiResponse({ status: 400, description: 'Invalid KYC state' })
   @ApiResponse({ status: 404, description: 'KYC record not found' })
@@ -103,12 +103,12 @@ export class KycController {
     return this.kycService.approveKyc(userId, req.user.userId);
   }
 
-  @Patch('superadmin/reject/:userId')
+  @Patch('reject/:userId')
   @Throttle({ default: { ttl: 600_000, limit: 30 } }) // 30/10min
   @UseGuards(RolesGuard)
   @Roles('SUPERADMIN')
   @HttpCode(HttpStatus.OK)
-  @ApiOperation({ summary: 'Admin: Reject KYC' })
+  @ApiOperation({ summary: 'Super-Admin: Reject KYC' })
   @ApiResponse({ status: 200, description: 'KYC rejected successfully' })
   @ApiResponse({ status: 400, description: 'Invalid KYC state' })
   @ApiResponse({ status: 404, description: 'KYC record not found' })
