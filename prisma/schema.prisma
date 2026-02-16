@@ -549,22 +549,29 @@ model KYC {
   step   KYCStep   @default(NIN_REQUIRED)
 
   // NIN/BVN
-  nin String?
-  bvn String?
+  nin String? @db.VarChar(11)
+  bvn String? @db.VarChar(11)
 
   ninVerifiedAt DateTime?
   bvnVerifiedAt DateTime?
 
   // Next of Kin
-  nextOfKinName         String?
-  nextOfKinRelationship String?
+  nextOfKinName         String? @db.VarChar(255)
+  nextOfKinRelationship String? @db.VarChar(255)
+  nextOfKinPhone        String? @db.VarChar(20)
 
-  rejectionReason String?
+  rejectionReason String?   @db.Text
   submittedAt     DateTime?
   reviewedAt      DateTime?
+  reviewedBy      String?
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+
+  @@index([status])
+  @@index([step])
+  @@index([userId, status])
+  @@map("kyc")
 }
 
 model OtpCode {
