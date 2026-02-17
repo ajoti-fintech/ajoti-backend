@@ -40,8 +40,8 @@ async function main() {
 
   const passwordHash = await hashValue(password);
 
-  console.log('👤 Creating SUPERADMIN...');
-  const user = await prisma.user.create({
+  console.log('Creating SUPERADMIN...');
+  await prisma.user.create({
     data: {
       firstName: 'Super',
       lastName: 'Admin',
