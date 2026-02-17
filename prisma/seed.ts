@@ -50,10 +50,10 @@ async function main() {
     },
   });
 
-  console.log('SUPERADMIN created:', {
-    email: user.email,
-    password,
-  });
+  // console.log('SUPERADMIN created:', {
+  //   email: user.email,
+  //   password,
+  // });
 }
 
 main()

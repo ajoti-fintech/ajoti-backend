@@ -4,19 +4,35 @@ services:
     container_name: ajoti-postgres
     restart: unless-stopped
     environment:
-      POSTGRES_USER: ${POSTGRES_USER:-ajoti_user}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-ajoti_password}
-      POSTGRES_DB: ${POSTGRES_DB:-ajoti_db}
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+      POSTGRES_DB: ${POSTGRES_DB:-ajoti_db_dev}
     ports:
       - "${POSTGRES_PORT:-5433}:5432"
     volumes:
       - postgres-data:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-ajoti_user} -d ${POSTGRES_DB:-ajoti_db}"]
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres} -d ${POSTGRES_DB:-ajoti_db_dev}"]
       interval: 1m30s
       timeout: 30s
       retries: 5
       start_period: 30s
 
+  redis:
+    image: redis:7-alpine
+    container_name: ajoti-redis
+    restart: unless-stopped
+    ports:
+      - "6388:6379"
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+
 volumes:
   postgres-data:
+  redis-data:
