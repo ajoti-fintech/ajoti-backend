@@ -28,6 +28,7 @@ import {
   formatMembershipResponse,
   RoscaCycleScheduleResponseDto,
   formatScheduleResponse,
+  UpdatePayoutConfigDto,
 } from './dto/rosca.dto';
 import { Roles } from '@/common/decorators/roles.decorator';
 
@@ -37,19 +38,6 @@ import { Roles } from '@/common/decorators/roles.decorator';
 @ApiBearerAuth('access-token')
 export class RoscaController {
   constructor(private readonly roscaService: RoscaService) {}
-
-  @Post()
-  @HttpCode(HttpStatus.CREATED)
-  @ApiOperation({ summary: 'Create a new ROSCA circle' })
-  @ApiResponse({ status: 201, type: RoscaCircleResponseDto })
-  async createCircle(@CurrentUser('userId') userId: string, @Body() dto: CreateRoscaCircleDto) {
-    const circle = await this.roscaService.createCircle(userId, dto);
-    return {
-      success: true,
-      message: 'Circle created successfully in DRAFT mode',
-      data: formatCircleResponse(circle),
-    };
-  }
 
   @Get()
   @HttpCode(HttpStatus.OK)
@@ -73,22 +61,6 @@ export class RoscaController {
     return {
       success: true,
       message: 'Join request submitted and collateral reserved',
-      data: formatMembershipResponse(membership),
-    };
-  }
-
-  @Patch(':circleId/members/:userId/approve')
-  @HttpCode(HttpStatus.OK)
-  @ApiOperation({ summary: 'Approve a member (Circle Admin only)' })
-  async approveMember(
-    @Param('circleId') circleId: string,
-    @Param('userId') userId: string,
-    @CurrentUser('userId') adminId: string,
-  ) {
-    const membership = await this.roscaService.approveMember(circleId, adminId, userId);
-    return {
-      success: true,
-      message: 'Member approved successfully',
       data: formatMembershipResponse(membership),
     };
   }
@@ -119,6 +91,19 @@ export class RoscaController {
 export class RoscaAdminController {
   constructor(private readonly roscaService: RoscaService) {}
 
+  @Post()
+  @HttpCode(HttpStatus.CREATED)
+  @ApiOperation({ summary: 'Create a new ROSCA circle' })
+  @ApiResponse({ status: 201, type: RoscaCircleResponseDto })
+  async createCircle(@CurrentUser('userId') userId: string, @Body() dto: CreateRoscaCircleDto) {
+    const circle = await this.roscaService.createCircle(userId, dto);
+    return {
+      success: true,
+      message: 'Circle created successfully in DRAFT mode',
+      data: formatCircleResponse(circle),
+    };
+  }
+
   @Patch(':circleId/activate')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: '[Admin] Verify and activate a ROSCA circle' })
@@ -130,6 +115,33 @@ export class RoscaAdminController {
       message: 'Circle verified and activated. Schedules generated.',
       data: formatCircleResponse(circle),
     };
+  }
+
+  @Patch(':circleId/members/:userId/approve')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Approve a member (Circle Admin only)' })
+  async approveMember(
+    @Param('circleId') circleId: string,
+    @Param('userId') userId: string,
+    @CurrentUser('userId') adminId: string,
+  ) {
+    const membership = await this.roscaService.approveMember(circleId, adminId, userId);
+    return {
+      success: true,
+      message: 'Member approved successfully',
+      data: formatMembershipResponse(membership),
+    };
+  }
+
+  @Patch(':circleId/payout-config')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: '[Admin] Update payout logic or assign member positions' })
+  async updatePayoutConfig(
+    @Param('circleId') circleId: string,
+    @CurrentUser('userId') adminId: string,
+    @Body() dto: UpdatePayoutConfigDto,
+  ) {
+    return await this.roscaService.updatePayoutConfiguration(circleId, adminId, dto);
   }
 
   @Get('all')

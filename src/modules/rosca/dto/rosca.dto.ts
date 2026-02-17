@@ -12,6 +12,8 @@ import {
   registerDecorator,
   ValidationOptions,
   IsInt,
+  IsArray,
+  ValidateNested,
 } from 'class-validator';
 import { ApiProperty } from '@nestjs/swagger';
 import {
@@ -22,6 +24,7 @@ import {
   ScheduleStatus,
   CircleVisibility, // Added this since it was used in your DTO
 } from '@prisma/client';
+import { Type } from 'class-transformer';
 
 // ────────────────────────────────────────────────
 // Custom validator
@@ -177,6 +180,26 @@ export class RoscaCycleScheduleResponseDto {
   @ApiProperty() payoutDate!: Date;
   @ApiProperty({ required: false }) recipientId?: string | null;
   @ApiProperty({ enum: ScheduleStatus }) status!: ScheduleStatus;
+}
+
+export class MemberPositionAssignmentDto {
+  @IsString()
+  userId!: string;
+
+  @IsInt()
+  position!: number;
+}
+
+export class UpdatePayoutConfigDto {
+  @IsOptional()
+  @IsEnum(PayoutLogic)
+  payoutLogic?: PayoutLogic;
+
+  @IsOptional()
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => MemberPositionAssignmentDto)
+  assignments?: MemberPositionAssignmentDto[];
 }
 
 // ────────────────────────────────────────────────

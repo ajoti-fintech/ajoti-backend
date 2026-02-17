@@ -11,6 +11,7 @@ import {
   CircleStatus,
   MembershipStatus,
   ScheduleStatus,
+  PayoutLogic,
 } from '@prisma/client';
 import {
   AdminListCirclesQueryDto,
@@ -67,6 +68,7 @@ export class RoscaService {
     if (startDate < now) {
       throw new BadRequestException('Start date cannot be in the past');
     }
+
     return await this.prisma.$transaction(
       async (tx) => {
         // Lock circle row
@@ -139,6 +141,22 @@ export class RoscaService {
       },
     });
 
+    if (circle.payoutLogic === PayoutLogic.ADMIN_ASSIGNED) {
+      const unassigned = memberships.some((m) => m.payoutPosition === null);
+      if (unassigned) {
+        throw new BadRequestException(
+          'All members must have an assigned position for ADMIN_ASSIGNED logic',
+        );
+      }
+
+      // Also check for duplicate positions
+      const positions = memberships.map((m) => m.payoutPosition);
+      const hasDuplicates = new Set(positions).size !== positions.length;
+      if (hasDuplicates) {
+        throw new BadRequestException('Payout positions must be unique');
+      }
+    }
+
     // 2. Rank members: Trust Score (Desc), then Joined Date (Asc)
     const sortedMembers = PayoutSorter.sort(memberships, circle.payoutLogic);
 
@@ -181,6 +199,51 @@ export class RoscaService {
     });
 
     return schedules;
+  }
+
+  /**
+   * [Admin] Update Payout Logic or Assign Positions
+   * Only allowed while circle is in DRAFT status.
+   */
+  async updatePayoutConfiguration(
+    circleId: string,
+    adminId: string,
+    dto: { payoutLogic?: PayoutLogic; assignments?: { userId: string; position: number }[] },
+  ) {
+    return await this.prisma.$transaction(async (tx) => {
+      const circle = await tx.roscaCircle.findUnique({ where: { id: circleId } });
+
+      if (!circle) throw new NotFoundException('Circle not found');
+      if (circle.adminId !== adminId)
+        throw new BadRequestException('Unauthorized: Not the circle admin');
+      if (circle.status !== CircleStatus.DRAFT) {
+        throw new BadRequestException('Cannot modify payout logic after the circle has started');
+      }
+
+      if (circle.payoutLogic !== PayoutLogic.ADMIN_ASSIGNED) {
+        throw new BadRequestException('This fucntion only runs if payout logic is admin assigned');
+      }
+
+      // 1. Update the Strategy if provided
+      if (dto.payoutLogic) {
+        await tx.roscaCircle.update({
+          where: { id: circleId },
+          data: { payoutLogic: dto.payoutLogic },
+        });
+      }
+
+      // 2. Update specific positions if provided (usually for ADMIN_ASSIGNED)
+      if (dto.assignments && dto.assignments.length > 0) {
+        for (const { userId, position } of dto.assignments) {
+          await tx.roscaMembership.update({
+            where: { circleId_userId: { circleId, userId } },
+            data: { payoutPosition: position },
+          });
+        }
+      }
+
+      return { success: true, message: 'Payout configuration updated successfully' };
+    });
   }
 
   private addFrequency(date: Date, frequency: string): Date {

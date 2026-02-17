@@ -24,6 +24,9 @@ export class PayoutSorter {
       case PayoutLogic.TRUST_SCORE:
         return this.sortByTrustScore(members);
 
+      case PayoutLogic.ADMIN_ASSIGNED: // <--- New Case
+        return this.sortByAdminAssigned(members);
+
       case PayoutLogic.COMBINED:
       default:
         return this.sortByCombined(members);
@@ -57,7 +60,17 @@ export class PayoutSorter {
     });
   }
 
-  // 4. COMBINED: Trust Score (Desc) then Joined Date (Asc)
+  // 4. ADMIN_ASSIGNED: Based on pre-set payoutPosition (Ascending)
+  private static sortByAdminAssigned(members: MembershipWithTrust[]): MembershipWithTrust[] {
+    return members.sort((a, b) => {
+      // If position is null/undefined, push to the end (Infinity)
+      const posA = a.payoutPosition ?? Infinity;
+      const posB = b.payoutPosition ?? Infinity;
+      return posA - posB;
+    });
+  }
+
+  // 5. COMBINED: Trust Score (Desc) then Joined Date (Asc)
   private static sortByCombined(members: MembershipWithTrust[]): MembershipWithTrust[] {
     return members.sort((a, b) => {
       const scoreA = a.user.userTrustStats?.trustScore ?? 1;
