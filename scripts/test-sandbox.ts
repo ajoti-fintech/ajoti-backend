@@ -1,7 +1,7 @@
 import 'dotenv/config'; // Loads .env if present (optional for local testing)
 import { HttpService } from '@nestjs/axios';
 import { ConfigService } from '@nestjs/config';
-import { FlutterwaveService } from '../src/modules/transactions/flutterwave.service'; // Adjust path if needed
+import { FlutterwaveService } from '@/modules/transactions/flutterwave.service';
 
 // Mocking Nest context for a simple standalone script
 async function testSandbox() {

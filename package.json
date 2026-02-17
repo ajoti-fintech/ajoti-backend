@@ -22,7 +22,8 @@
     "prisma:generate": "prisma generate",
     "prisma:migrate:dev": "prisma migrate dev",
     "prisma:migrate:deploy": "prisma migrate deploy",
-    "prisma:studio": "prisma studio"
+    "prisma:studio": "prisma studio",
+    "init:wallets": "ts-node scripts/init-system-wallets.ts"
   },
   "dependencies": {
     "@nestjs-redis/kit": "^0.13.4",
@@ -33,6 +34,7 @@
     "@nestjs/jwt": "^11.0.2",
     "@nestjs/passport": "^11.0.5",
     "@nestjs/platform-express": "^11",
+    "@nestjs/schedule": "^6.1.1",
     "@nestjs/swagger": "^11",
     "@nestjs/throttler": "^6.5.0",
     "@prisma/adapter-pg": "^7.3.0",

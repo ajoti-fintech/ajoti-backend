@@ -1,12 +1,13 @@
+// src/modules/ledger/ledger.service.ts
 import { Injectable, BadRequestException } from '@nestjs/common';
-import { PrismaService } from '../../prisma/prisma.service';
+import { PrismaService } from '@/prisma';
 import {
   LedgerEntry,
   EntryType,
-  Prisma,
   MovementType,
   BucketType,
   LedgerSourceType,
+  Prisma,
 } from '@prisma/client';
 
 export interface WriteEntryParams {
@@ -16,7 +17,7 @@ export interface WriteEntryParams {
   bucketType?: BucketType;
   amount: bigint;
   reference: string;
-  metadata?: any;
+  metadata?: Prisma.InputJsonValue;
   sourceType: LedgerSourceType;
   sourceId: string;
 }
@@ -26,8 +27,8 @@ export class LedgerService {
   constructor(private readonly prisma: PrismaService) {}
 
   /**
-   * Writes an atomic ledger entry using the "Running Total" pattern.
-   * Every entry stores the balanceAfter, making it the source of truth for current state.
+   * Writes an atomic ledger entry using the running total pattern.
+   * Source of truth: balanceAfter on each entry.
    */
   async writeEntry(
     params: WriteEntryParams,
@@ -40,126 +41,131 @@ export class LedgerService {
       bucketType,
       amount,
       reference,
-      metadata,
+      metadata = {},
       sourceType,
       sourceId,
     } = params;
 
     if (!sourceType || !sourceId) {
-      throw new BadRequestException('Every ledger entry must have a sourceType and sourceId');
+      throw new BadRequestException('sourceType and sourceId are required');
     }
-
     if (amount <= 0n) {
-      throw new BadRequestException('Amount must be greater than zero');
+      throw new BadRequestException('Amount must be positive');
     }
 
-    // --- BUCKET VALIDATION LOGIC ---
-
-    // 1. Validation for Restrictions (RESERVE/RELEASE)
-    if (entryType === EntryType.RESERVE || entryType === EntryType.RELEASE) {
-      if (!bucketType) {
-        throw new BadRequestException(`bucketType is required for ${entryType} operations`);
-      }
-      if (bucketType === BucketType.MAIN) {
-        throw new BadRequestException('Cannot RESERVE or RELEASE from the MAIN bucket directly');
+    // Bucket rules
+    if (([EntryType.RESERVE, EntryType.RELEASE] as EntryType[]).includes(entryType)) {
+      if (!bucketType || bucketType === BucketType.MAIN) {
+        throw new BadRequestException(`bucketType required and cannot be MAIN for ${entryType}`);
       }
     }
-
-    // 2. Validation for Global Balance Changes (CREDIT/DEBIT)
-    if (entryType === EntryType.CREDIT || entryType === EntryType.DEBIT) {
-      if (bucketType && bucketType !== BucketType.MAIN) {
-        throw new BadRequestException('CREDIT/DEBIT operations must target the MAIN bucket');
-      }
+    if (
+      ([EntryType.CREDIT, EntryType.DEBIT] as EntryType[]).includes(entryType) &&
+      bucketType &&
+      bucketType !== BucketType.MAIN
+    ) {
+      throw new BadRequestException('CREDIT/DEBIT must target MAIN bucket');
     }
 
-    // Use provided transaction client or default to main prisma client
     const execute = async (tx: Prisma.TransactionClient) => {
-      // 1. Pessimistic Lock: Ensure no other process moves money for this wallet simultaneously
+      // Lock wallet
       await tx.$executeRaw`SELECT id FROM wallets WHERE id = ${walletId} FOR UPDATE`;
 
-      // 2. Get the current state from the LATEST ledger entry
+      // Lock bucket if RESERVE/RELEASE
+      if (
+        ([EntryType.RESERVE, EntryType.RELEASE] as EntryType[]).includes(entryType) &&
+        bucketType
+      ) {
+        await tx.$executeRaw`
+          SELECT reserved_amount FROM wallet_buckets 
+          WHERE wallet_id = ${walletId} 
+            AND bucket_type = ${bucketType} 
+            AND source_id = ${sourceId} 
+          FOR UPDATE
+        `;
+      }
+
+      // Get latest total balance
       const lastEntry = await tx.ledgerEntry.findFirst({
         where: { walletId },
         orderBy: { createdAt: 'desc' },
+        select: { balanceAfter: true },
       });
 
       const currentTotal = lastEntry?.balanceAfter ?? 0n;
 
-      // 3. Get reserved amounts to calculate "Available" balance
+      // Calculate available balance
       const buckets = await tx.walletBucket.findMany({ where: { walletId } });
       const totalReserved = buckets.reduce((sum, b) => sum + b.reservedAmount, 0n);
       const currentAvailable = currentTotal - totalReserved;
 
-      // 4. Validate sufficient funds for DEBIT or RESERVE
       if (
-        (entryType === EntryType.DEBIT || entryType === EntryType.RESERVE) &&
+        ([EntryType.DEBIT, EntryType.RESERVE] as EntryType[]).includes(entryType) &&
         amount > currentAvailable
       ) {
         throw new BadRequestException(
-          `Insufficient available balance. Available: ${Number(currentAvailable) / 100}`,
+          `Insufficient available balance. Available: ₦${Number(currentAvailable) / 100}`,
         );
       }
 
-      // 5. UPDATE BUCKETS (Handling Multiple Buckets per contextId)
-      if (entryType === EntryType.RESERVE || entryType === EntryType.RELEASE) {
-        const bucketAmountChange = entryType === EntryType.RESERVE ? amount : -amount;
+      // Update bucket for RESERVE/RELEASE
+      if (([EntryType.RESERVE, EntryType.RELEASE] as EntryType[]).includes(entryType)) {
+        const change = entryType === EntryType.RESERVE ? amount : -amount;
 
         await tx.walletBucket.upsert({
           where: {
             walletId_bucketType_sourceId: {
               walletId,
-              bucketType: bucketType as BucketType,
+              bucketType: bucketType!,
               sourceId,
             },
           },
-          update: {
-            reservedAmount: { increment: bucketAmountChange },
-          },
+          update: { reservedAmount: { increment: change } },
           create: {
             walletId,
-            bucketType: bucketType as BucketType,
+            bucketType: bucketType!,
             sourceId,
             reservedAmount: amount,
           },
         });
       }
 
-      // 6. Calculate new balance snapshots
-      const balanceBefore = currentTotal;
+      // Calculate new total
       let balanceAfter = currentTotal;
+      if (entryType === EntryType.CREDIT) balanceAfter += amount;
+      if (entryType === EntryType.DEBIT) balanceAfter -= amount;
 
-      if (entryType === EntryType.CREDIT) {
-        balanceAfter = currentTotal + amount;
-      } else if (entryType === EntryType.DEBIT) {
-        balanceAfter = currentTotal - amount;
+      // Prevent duplicate writes (unique constraint)
+      const existing = await tx.ledgerEntry.findFirst({
+        where: { walletId, reference, sourceType, sourceId },
+      });
+      if (existing) {
+        throw new BadRequestException('Duplicate ledger entry detected');
       }
 
-      // 7. Create the immutable record
-      return await tx.ledgerEntry.create({
+      // Create entry
+      return tx.ledgerEntry.create({
         data: {
           walletId,
           reference,
           entryType,
           movementType,
-          bucketType: bucketType || BucketType.MAIN,
+          bucketType: bucketType ?? BucketType.MAIN,
           amount,
-          balanceBefore,
+          balanceBefore: currentTotal,
           balanceAfter,
-          metadata: metadata || {},
+          metadata: metadata as Prisma.InputJsonValue,
           sourceType,
           sourceId,
         },
       });
     };
 
-    // If txClient is provided, we use it directly; otherwise, we wrap in a new transaction
-    if (txClient) {
-      return await execute(txClient);
-    }
-
-    return await this.prisma.$transaction(execute, {
-      isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
-    });
+    return txClient
+      ? execute(txClient)
+      : this.prisma.$transaction(execute, {
+          isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
+        });
   }
 
   async createReversalEntry(originalEntryId: string, reason: string): Promise<LedgerEntry> {
@@ -167,26 +173,24 @@ export class LedgerService {
       where: { id: originalEntryId },
     });
 
-    if (!original) {
-      throw new BadRequestException('Original entry not found');
-    }
+    if (!original) throw new BadRequestException('Original entry not found');
 
     const reversalType =
       original.entryType === EntryType.CREDIT ? EntryType.DEBIT : EntryType.CREDIT;
 
-    return await this.writeEntry({
+    return this.writeEntry({
       walletId: original.walletId,
       entryType: reversalType,
       movementType: original.movementType,
-      bucketType: original.bucketType || undefined,
+      bucketType: original.bucketType ?? undefined,
       amount: original.amount,
-      reference: `REVERSAL-${original.reference}`,
+      reference: `REV-${original.reference}`,
       sourceType: original.sourceType,
       sourceId: original.sourceId,
       metadata: {
         reversalOf: originalEntryId,
         reason,
-        originalReference: original.reference,
+        originalCreatedAt: original.createdAt.toISOString(),
       },
     });
   }
@@ -200,36 +204,36 @@ export class LedgerService {
       movementType?: MovementType;
     },
   ): Promise<LedgerEntry[]> {
-    return await this.prisma.ledgerEntry.findMany({
+    return this.prisma.ledgerEntry.findMany({
       where: {
         walletId,
         ...(options?.sourceType && { sourceType: options.sourceType }),
         ...(options?.movementType && { movementType: options.movementType }),
       },
       orderBy: { createdAt: 'desc' },
-      take: options?.limit || 50,
-      skip: options?.offset || 0,
+      take: options?.limit ?? 50,
+      skip: options?.offset ?? 0,
     });
   }
 
   async computeTotalBalance(walletId: string): Promise<bigint> {
-    const lastEntry = await this.prisma.ledgerEntry.findFirst({
+    const last = await this.prisma.ledgerEntry.findFirst({
       where: { walletId },
       orderBy: { createdAt: 'desc' },
       select: { balanceAfter: true },
     });
-    return lastEntry?.balanceAfter ?? 0n;
+    return last?.balanceAfter ?? 0n;
   }
 
   async getDetailedBalance(walletId: string) {
     const total = await this.computeTotalBalance(walletId);
 
-    const bucketSums = await this.prisma.walletBucket.aggregate({
+    const buckets = await this.prisma.walletBucket.aggregate({
       where: { walletId },
       _sum: { reservedAmount: true },
     });
 
-    const reserved = bucketSums._sum.reservedAmount || 0n;
+    const reserved = buckets._sum.reservedAmount ?? 0n;
 
     return {
       total,

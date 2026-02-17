@@ -1,107 +1,130 @@
-import { Injectable, InternalServerErrorException, Logger } from '@nestjs/common';
+// src/modules/transaction/flutterwave.service.ts
+import { Injectable, Logger } from '@nestjs/common';
 import { HttpService } from '@nestjs/axios';
+import { firstValueFrom } from 'rxjs';
+import { createHmac } from 'crypto';
+import {
+  PaymentProvider,
+  PaymentInitializationParams,
+  PaymentInitializationResponse,
+  WebhookVerificationResult,
+  PaymentVerificationResponse,
+} from './interfaces/payment-provider.interface';
 import { ConfigService } from '@nestjs/config';
-import { lastValueFrom } from 'rxjs';
 
 @Injectable()
-export class FlutterwaveService {
+export class FlutterwaveService implements PaymentProvider {
   private readonly logger = new Logger(FlutterwaveService.name);
-  private readonly baseUrl: string = 'https://developersandbox-api.flutterwave.com'; // Sandbox for v4
-  private accessToken: string | null = null;
-  private tokenExpiry: number = 0;
+  private readonly baseUrl = 'https://api.flutterwave.com/v3';
+  private readonly publicKey: string;
+  private readonly secretKey: string;
+  private readonly webhookSecret: string;
 
   constructor(
-    private readonly httpService: HttpService,
-    private readonly configService: ConfigService,
-  ) {}
+    private http: HttpService,
+    private readonly config: ConfigService,
+  ) {
+    const isDev = this.config.get('NODE_ENV') !== 'production';
 
-  private async getAccessToken(): Promise<string> {
-    const now = Date.now();
-    if (this.accessToken && now < this.tokenExpiry) {
-      return this.accessToken;
+    // 2. INITIALIZE ALL: Using mock values for Dev/Test
+    this.publicKey = this.config.get<string>('FLW_PUBLIC_KEY') || (isDev ? 'dev_pk' : '');
+    this.secretKey = this.config.get<string>('FLW_SECRET_KEY') || (isDev ? 'dev_sk' : '');
+    this.webhookSecret = this.config.get<string>('FLW_SECRET_HASH') || (isDev ? 'dev_hash' : '');
+
+    if (!this.publicKey || !this.secretKey) {
+      this.logger.warn('Flutterwave credentials missing - running in Mock Mode');
+      if (!isDev) throw new Error('Flutterwave credentials not configured');
     }
+  }
 
+  async initializePayment(
+    params: PaymentInitializationParams,
+  ): Promise<PaymentInitializationResponse> {
+    const txRef = params.tx_ref;
     try {
-      const clientId = this.configService.get<string>('FLW_CLIENT_ID')!;
-      const clientSecret = this.configService.get<string>('FLW_CLIENT_SECRET')!;
+      const payload = {
+        tx_ref: txRef,
+        amount: params.amount,
+        currency: params.currency,
+        redirect_url: params.redirect_url,
+        customer: params.customer,
+        meta: params.meta,
+        payment_options: 'card,banktransfer,ussd',
+      };
 
-      if (!clientId || !clientSecret) {
-        throw new Error('Missing FLW_CLIENT_ID or FLW_CLIENT_SECRET');
+      const response = await firstValueFrom(
+        this.http.post(`${this.baseUrl}/payments`, payload, {
+          headers: { Authorization: `Bearer ${this.secretKey}` },
+          timeout: 20000,
+        }),
+      );
+
+      return { status: 'success', data: response.data.data };
+    } catch (error: any) {
+      this.logger.error(`Flutterwave init failed for ${txRef}`, error.stack);
+      return { status: 'error', message: error.response?.data?.message || 'Network error' };
+    }
+  }
+
+  verifyWebhook(rawBody: string, signature: string): WebhookVerificationResult {
+    try {
+      const computedHash = createHmac('sha256', this.webhookSecret).update(rawBody).digest('hex');
+      if (computedHash === signature) {
+        return { valid: true, payload: JSON.parse(rawBody) };
+      }
+      return { valid: false, reason: 'HMAC mismatch' };
+    } catch (error) {
+      return { valid: false, reason: 'Verification failed' };
+    }
+  }
+
+  async verifyTransaction(providerId: string): Promise<PaymentVerificationResponse> {
+    try {
+      const response = await firstValueFrom(
+        this.http.get(`${this.baseUrl}/transactions/${providerId}/verify`, {
+          headers: { Authorization: `Bearer ${this.secretKey}` },
+          timeout: 10000,
+        }),
+      );
+
+      const flwStatus = response.data.data.status.toLowerCase();
+      return {
+        status: flwStatus.includes('successful')
+          ? 'success'
+          : flwStatus.includes('pending')
+            ? 'pending'
+            : 'failed',
+        amount: response.data.data.amount,
+        currency: response.data.data.currency,
+        metadata: response.data.data.meta,
+      };
+    } catch (error: any) {
+      return { status: 'unknown', message: error.message };
+    }
+  }
+
+  async getBalance(currency: string = 'NGN'): Promise<{ balance: number; currency: string }> {
+    try {
+      const response = await firstValueFrom(
+        this.http.get(`${this.baseUrl}/balances/${currency}`, {
+          headers: { Authorization: `Bearer ${this.secretKey}` },
+          timeout: 10000,
+        }),
+      );
+
+      const data = response.data;
+
+      if (data.status === 'success') {
+        return {
+          balance: data.data.available_balance,
+          currency: data.data.currency,
+        };
       }
 
-      const response = await lastValueFrom(
-        this.httpService.post(
-          'https://idp.flutterwave.com/realms/flutterwave/protocol/openid-connect/token',
-          new URLSearchParams({
-            grant_type: 'client_credentials',
-            client_id: clientId,
-            client_secret: clientSecret,
-          }).toString(),
-          {
-            headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-          },
-        ),
-      );
-
-      const { access_token, expires_in } = response.data;
-      this.accessToken = access_token;
-      this.tokenExpiry = now + expires_in * 1000 - 60000; // Refresh 1 min early
-
-      this.logger.log('Flutterwave v4 access token refreshed');
-      return access_token;
+      throw new Error(data.message || 'Failed to fetch provider balance');
     } catch (error: any) {
-      this.logger.error(
-        'Failed to get Flutterwave v4 token',
-        error.response?.data || error.message,
-      );
-      throw new InternalServerErrorException('Flutterwave authentication failed');
-    }
-  }
-
-  private async getAuthHeaders() {
-    const token = await this.getAccessToken();
-    return {
-      'Content-Type': 'application/json',
-      Authorization: `Bearer ${token}`,
-    };
-  }
-
-  async verifyTransaction(transactionId: string) {
-    try {
-      this.logger.debug(`Verifying transaction ${transactionId} with Flutterwave v4...`);
-
-      const headers = await this.getAuthHeaders();
-      const response = await lastValueFrom(
-        this.httpService.get(`${this.baseUrl}/transactions/${transactionId}/verify`, {
-          headers,
-        }),
-      );
-
-      return response.data;
-    } catch (error: any) {
-      const errorMsg = error.response?.data?.message || error.message;
-      this.logger.error(`Verification failed: ${errorMsg}`);
-      throw new InternalServerErrorException(`Transaction verification failed: ${errorMsg}`);
-    }
-  }
-
-  async getBalance(currency: string = 'NGN') {
-    try {
-      this.logger.debug(`Fetching balance for ${currency} with Flutterwave v4...`);
-
-      const headers = await this.getAuthHeaders();
-      // v4 balance endpoint (all or specific via query/filter; docs show /wallets/balances)
-      const response = await lastValueFrom(
-        this.httpService.get(`${this.baseUrl}/wallets/balances/${currency}`, {
-          headers,
-        }),
-      );
-
-      return response.data;
-    } catch (error: any) {
-      const errorMsg = error.response?.data?.message || error.message;
-      this.logger.error(`Balance fetch failed: ${errorMsg}`);
-      throw new InternalServerErrorException(`Failed to fetch balance: ${errorMsg}`);
+      this.logger.error(`Failed to fetch Flutterwave balance for ${currency}`, error.stack);
+      throw new Error('Provider balance check failed');
     }
   }
 }
