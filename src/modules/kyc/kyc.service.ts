@@ -58,7 +58,7 @@ export class KycService {
    * Verify NIN and update KYC record
    */
   async verifyNin(userId: string, verifyNinDto: VerifyNinDto): Promise<KycResponseDto> {
-    const { nin, firstName, lastName, phoneNumber, dob } = verifyNinDto;
+    const { nin, firstName, lastName, dob } = verifyNinDto;
 
     // Get or create KYC record
     let kycRecord = await this.prisma.kYC.findUnique({
@@ -86,7 +86,6 @@ export class KycService {
       nin,
       firstName,
       lastName,
-      phoneNumber,
       dob,
     );
 
@@ -127,7 +126,7 @@ export class KycService {
    * Verify BVN and update KYC record
    */
   async verifyBvn(userId: string, verifyBvnDto: VerifyBvnDto): Promise<KycResponseDto> {
-    const { bvn, firstName, lastName, dob, phoneNumber } = verifyBvnDto;
+    const { bvn, firstName, lastName, dob } = verifyBvnDto;
 
     // Get KYC record
     const kycRecord = await this.prisma.kYC.findUnique({
@@ -156,7 +155,6 @@ export class KycService {
       firstName,
       lastName,
       dob,
-      phoneNumber,
     );
 
     if (!identityVerification.verified) {

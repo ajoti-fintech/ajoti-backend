@@ -22,7 +22,7 @@ import { Throttle } from '@nestjs/throttler';
 @ApiTags('KYC')
 @Controller('kyc')
 @UseGuards(JwtAuthGuard)
-@ApiBearerAuth()
+@ApiBearerAuth('access-token')
 export class KycController {
   constructor(private readonly kycService: KycService) {}
 

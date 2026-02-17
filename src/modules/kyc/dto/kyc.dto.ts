@@ -27,12 +27,12 @@ export class VerifyNinDto {
   @Matches(/^\d{4}-\d{2}-\d{2}$/, { message: 'Date of birth must be in YYYY-MM-DD format' })
   dob: string;
 
-  @ApiProperty({ example: '+23456789012' })
-  @IsString()
-  @IsNotEmpty()
-  @Matches(/^\+?[1-9]\d{1,14}$/, { message: 'Invalid phone number format' })
-  // @Matches(/^\+?\d{10,15}$/, { message: 'Phone number must be valid' })
-  phoneNumber: string;
+  // @ApiProperty({ example: '+23456789012' })
+  // @IsString()
+  // @IsNotEmpty()
+  // @Matches(/^\+?[1-9]\d{1,14}$/, { message: 'Invalid phone number format' })
+  // // @Matches(/^\+?\d{10,15}$/, { message: 'Phone number must be valid' })
+  // phoneNumber: string;
 }
 
 export class VerifyBvnDto {
@@ -60,12 +60,6 @@ export class VerifyBvnDto {
   @IsNotEmpty()
   @Matches(/^\d{4}-\d{2}-\d{2}$/, { message: 'Date of birth must be in YYYY-MM-DD format' })
   dob: string;
-
-  @ApiProperty({ example: '+23456789012' })
-  @IsString()
-  @IsNotEmpty()
-  @Matches(/^\+?[1-9]\d{1,14}$/, { message: 'Invalid phone number format' })
-  phoneNumber: string;
 }
 
 export class VerifyNokDto {
@@ -106,6 +100,7 @@ export class KycResponseDto {
   bvn?: string;
   nextOfKinName?: string;
   nextOfKinRelationship?: string;
+  nextOfKinPhone?: string;
   ninVerifiedAt?: Date;
   bvnVerifiedAt?: Date;
   submittedAt?: Date;
