@@ -15,7 +15,7 @@ import { ApiTags, ApiOperation, ApiResponse, ApiBearerAuth } from '@nestjs/swagg
 import { RoscaService } from './rosca.service';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../auth/guards/roles.guard';
-import { Roles } from '@/common/decorators/roles.decorator';
+
 import { CurrentUser } from '@/common/decorators/current-user.decorator';
 import {
   CreateRoscaCircleDto,
@@ -29,6 +29,7 @@ import {
   RoscaCycleScheduleResponseDto,
   formatScheduleResponse,
 } from './dto/rosca.dto';
+import { Roles } from '@/common/decorators/roles.decorator';
 
 @ApiTags('ROSCA')
 @Controller('rosca')
