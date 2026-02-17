@@ -24,6 +24,7 @@ import { PayoutModule } from './modules/payout/payout.module';
 import { TrustModule } from './modules/trust/trust.module';
 import { TransactionsModule } from './modules/transactions/transactions.module';
 import { ScheduleModule } from '@nestjs/schedule';
+import { FundingModule } from './modules/funding/funding.module';
 
 const ENV = process.env.NODE_ENV || 'development';
 
@@ -81,6 +82,7 @@ const ENV = process.env.NODE_ENV || 'development';
     PayoutModule,
     TrustModule,
     TransactionsModule,
+    FundingModule,
   ],
   providers: [
     AppService,

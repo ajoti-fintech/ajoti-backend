@@ -267,6 +267,7 @@ enum PayoutLogic {
   SEQUENTIAL
   TRUST_SCORE
   COMBINED
+  ADMIN_ASSIGNED
 }
 
 enum CircleStatus {

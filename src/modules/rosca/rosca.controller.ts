@@ -15,7 +15,7 @@ import { ApiTags, ApiOperation, ApiResponse, ApiBearerAuth } from '@nestjs/swagg
 import { RoscaService } from './rosca.service';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../auth/guards/roles.guard';
-import { Roles } from '../auth/roles.decorator';
+import { Roles } from '@/common/decorators/roles.decorator';
 import { CurrentUser } from '@/common/decorators/current-user.decorator';
 import {
   CreateRoscaCircleDto,
@@ -119,8 +119,6 @@ export class RoscaAdminController {
   constructor(private readonly roscaService: RoscaService) {}
 
   @Patch(':circleId/activate')
-  @UseGuards(RolesGuard)
-  @Roles('ADMIN', 'SUPERADMIN')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: '[Admin] Verify and activate a ROSCA circle' })
   @ApiResponse({ status: 200, type: RoscaCircleResponseDto })
@@ -134,8 +132,6 @@ export class RoscaAdminController {
   }
 
   @Get('all')
-  @UseGuards(RolesGuard)
-  @Roles('ADMIN', 'SUPERADMIN')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: '[Admin] View all circles regardless of visibility' })
   @ApiResponse({ status: 200, type: [RoscaCircleResponseDto] })
