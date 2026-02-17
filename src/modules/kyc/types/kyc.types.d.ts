@@ -9,7 +9,6 @@ type MatchDetails = {
   firstNameMatch?: boolean;
   lastNameMatch?: boolean;
   dobMatch?: boolean;
-  phoneNumberMatch?: boolean;
 };
 
 export type VerificationResult = {
