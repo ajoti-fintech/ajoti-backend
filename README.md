@@ -45,7 +45,17 @@ cp .env.example .env
 # Edit with your database credentials
 ```
 
-**Environment Variables:**
+### 3. Docker Setup
+
+```bash
+docker compose -f docker/docker-compose.yml -f docker/docker-compose.dev.yml up --build -d
+```
+To see logs:
+```bash
+docker compose -f docker/docker-compose.yml -f docker/docker-compose.dev.yml logs -f
+```
+
+### 4. Environment Variables
 
 | Variable | Description | Default |
 |----------|-------------|---------|
@@ -54,7 +64,7 @@ cp .env.example .env
 | `CORS_ORIGIN` | Allowed CORS origins | `*` |
 | `DATABASE_URL` | PostgreSQL connection string | - |
 
-### 3. Database Setup
+### 5. Database Setup
 
 ```bash
 # Generate Prisma client

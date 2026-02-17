@@ -13,9 +13,9 @@ import { ApiTags, ApiOperation, ApiBearerAuth } from '@nestjs/swagger';
 import { PayoutService } from './payout.service';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../auth/guards/roles.guard';
-import { Roles } from '../auth/roles.decorator';
 import { PayoutSchedulerService } from './payout-scheduler.service';
 import { ReversePayoutDto } from './dto/payout.dto';
+import { Roles } from '@/common/decorators/roles.decorator';
 
 @ApiTags('Payouts')
 @Controller('rosca/:circleId/payouts')

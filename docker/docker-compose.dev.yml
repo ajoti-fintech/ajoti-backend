@@ -6,11 +6,13 @@ services:
     container_name: ajoti-backend-dev
     restart: unless-stopped
     env_file:
-      - ../.env.dev
+      - ../.env
     ports:
-      - "${AJOTI_BACKEND_PORT:-3000}:3000"
+      - "${PORT:-3000}:3000"
     depends_on:
-      - postgres:
+      postgres:
+        condition: service_healthy
+      redis:
         condition: service_healthy
     volumes:
       - ../:/app
@@ -18,7 +20,8 @@ services:
     command: >
       sh -c "
         npx prisma generate &&
-        npx prisma migrate dev --name init --skip-seed &&
+        npx prisma migrate deploy &&
+        pnpm exec ts-node prisma/seed.ts &&
         pnpm run start:dev
       "
 
