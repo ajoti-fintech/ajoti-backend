@@ -5,11 +5,11 @@ import type { YouverifyResponse, VerificationResult } from './types/kyc.types';
 
 @Injectable()
 export class IdentityVerificationService {
-  private readonly baseUrl = this.configService.get<string>('NIN_BASE_URL');
+  private readonly baseUrl = this.configService.get<string>('YOUVERIFY_BASE_URL');
   private readonly apiKey: string | undefined;
 
   constructor(private readonly configService: ConfigService) {
-    this.apiKey = this.configService.get<string>('NIN_API_KEY');
+    this.apiKey = this.configService.get<string>('YOUVERIFY_API_KEY');
   }
 
   private validateResponse(response: any): VerificationResult {
@@ -25,7 +25,6 @@ export class IdentityVerificationService {
           firstNameMatch: false,
           lastNameMatch: false,
           dobMatch: false,
-          phoneNumberMatch: false,
         },
       };
     }
@@ -40,7 +39,6 @@ export class IdentityVerificationService {
           firstNameMatch: false,
           lastNameMatch: false,
           dobMatch: false,
-          phoneNumberMatch: false,
         },
       };
     }
@@ -54,14 +52,13 @@ export class IdentityVerificationService {
         firstNameMatch: true,
         lastNameMatch: true,
         dobMatch: true,
-        phoneNumberMatch: true,
       },
     };
   }
 
   private checkDataMatch(
     verifiedData: any,
-    providedData: { firstName?: string; lastName?: string; dob?: string; phoneNumber?: string },
+    providedData: { firstName?: string; lastName?: string; dob?: string },
   ): VerificationResult['matchDetails'] {
     const matchDetails: VerificationResult['matchDetails'] = {};
 
@@ -79,10 +76,6 @@ export class IdentityVerificationService {
       matchDetails.dobMatch = providedData.dob === verifiedData.dateOfBirth;
     }
 
-    if (providedData.phoneNumber && verifiedData.phoneNumber) {
-      matchDetails.phoneNumberMatch = providedData.phoneNumber === verifiedData.phoneNumber;
-    }
-
     return matchDetails;
   }
 
@@ -90,7 +83,6 @@ export class IdentityVerificationService {
     nin: string,
     firstName: string,
     lastName: string,
-    phoneNumber?: string,
     dob?: string,
   ): Promise<VerificationResult> {
     if (!this.apiKey || !this.baseUrl) {
@@ -100,18 +92,20 @@ export class IdentityVerificationService {
     try {
       const payload = {
         id: nin,
+        premiumNin: true,
         isSubjectConsent: true,
-        metadata: {
-          firstName: firstName,
-          lastName: lastName,
-          phoneNumber: phoneNumber,
-          dateOfBirth: dob,
+        validations: {
+          data: {
+            firstName: firstName,
+            lastName: lastName,
+            dateOfBirth: dob,
+          },
         },
       };
 
       const response = await axios.post(`${this.baseUrl}/identity/ng/nin`, payload, {
         headers: {
-          Token: this.apiKey,
+          token: this.apiKey,
           'Content-Type': 'application/json',
         },
       });
@@ -120,12 +114,11 @@ export class IdentityVerificationService {
         return result;
       }
 
-      if (firstName || lastName || dob || phoneNumber) {
+      if (firstName || lastName || dob) {
         const matchDetails = this.checkDataMatch(result.data, {
           firstName,
           lastName,
           dob,
-          phoneNumber,
         });
 
         const allMatched = Object.values(matchDetails).every((match) => match !== false);
@@ -159,7 +152,6 @@ export class IdentityVerificationService {
     firstName: string,
     lastName: string,
     dob: string,
-    phoneNumber: string,
   ): Promise<VerificationResult> {
     if (!this.apiKey || !this.baseUrl) {
       throw new Error('BVN API key or base URL is not configured');
@@ -168,18 +160,20 @@ export class IdentityVerificationService {
     try {
       const payload = {
         id: bvn,
+        premiumBVN: true,
         isSubjectConsent: true,
-        metadata: {
-          firstName: firstName,
-          lastName: lastName,
-          phoneNumber: phoneNumber,
-          dateOfBirth: dob,
+        validations: {
+          data: {
+            firstName: firstName,
+            lastName: lastName,
+            dateOfBirth: dob,
+          },
         },
       };
 
       const response = await axios.post(`${this.baseUrl}/identity/ng/bvn`, payload, {
         headers: {
-          Token: this.apiKey,
+          token: this.apiKey,
           'Content-Type': 'application/json',
         },
       });
@@ -188,12 +182,11 @@ export class IdentityVerificationService {
         return result;
       }
 
-      if (firstName || lastName || dob || phoneNumber) {
+      if (firstName || lastName || dob) {
         const matchDetails = this.checkDataMatch(result.data, {
           firstName,
           lastName,
           dob,
-          phoneNumber,
         });
 
         const allMatched = Object.values(matchDetails).every((match) => match !== false);
