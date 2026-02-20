@@ -7,9 +7,11 @@ import { JwtModule } from '@nestjs/jwt';
 import { JwtStrategy } from './jwt.strategy';
 import { PassportModule } from '@nestjs/passport';
 import { ConfigModule, ConfigService } from '@nestjs/config';
+import { KafkaModule } from '../kafka/kafka.module';
 
 @Module({
   imports: [
+    KafkaModule,
     UsersModule,
     MailModule,
     PassportModule.register({ defaultStrategy: 'jwt' }),
