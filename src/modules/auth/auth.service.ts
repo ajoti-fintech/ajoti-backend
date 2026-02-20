@@ -23,6 +23,7 @@ import * as crypto from 'crypto';
 import { resetPasswordOtpTemplate } from '../mail/templates/otp-reset-password';
 import { verificationOtpTemplate } from '../mail/templates/otp-verification';
 import { MailErrorMapper } from '@/common/error/mail-error';
+import { KafkaService } from '../kafka/kafka.service';
 
 function sha256(input: string) {
   return crypto.createHash('sha256').update(input).digest('hex');
@@ -36,6 +37,7 @@ export class AuthService {
     private jwt: JwtService,
     private mail: MailService,
     private readonly mailErrorMapper: MailErrorMapper,
+    private readonly kafkaService: KafkaService,
   ) {}
 
   private logger = new Logger('HTTP');
@@ -98,6 +100,13 @@ export class AuthService {
 
     const fullName = `${registerDto.firstName} ${registerDto.lastName}`;
     await this.sendOtp(registerDto.email, OTPPurpose.VERIFICATION, fullName);
+
+    await this.kafkaService.emit('auth.user.registered', {
+      userId: user.id,
+      email: user.email,
+      fullName,
+      timestamp: new Date().toISOString(),
+    });
 
     return { message: 'Registered, OTP sent to mail', userId: user.id };
   }
@@ -238,6 +247,12 @@ export class AuthService {
       data: { isVerified: true },
     });
 
+    await this.kafkaService.emit('auth.user.verified', {
+      userId: user.id,
+      email: user.email,
+      timestamp: new Date().toISOString(),
+    });
+
     return { message: 'email verified' };
   }
 
@@ -253,6 +268,12 @@ export class AuthService {
     }
 
     const tokens = await this.issueTokens(user.id, user.role);
+
+    await this.kafkaService.emit('auth.user.logged-in', {
+      userId: user.id,
+      email: user.email,
+      timestamp: new Date().toISOString(),
+    });
 
     return {
       // message: 'Logged in',
@@ -305,6 +326,12 @@ export class AuthService {
       data: { revokedAt: new Date() },
     });
 
+    await this.kafkaService.emit('auth.user.password-reset', {
+      userId: user.id,
+      email: user.email,
+      timestamp: new Date().toISOString(),
+    });
+
     return { message: 'Password reset successful.' };
   }
 
@@ -326,6 +353,12 @@ export class AuthService {
     await this.prisma.refreshToken.updateMany({
       where: { userId: userId, revokedAt: null },
       data: { revokedAt: new Date() },
+    });
+
+    await this.kafkaService.emit('auth.user.password-changed', {
+      userId: user.id,
+      email: user.email,
+      timestamp: new Date().toISOString(),
     });
 
     return { message: 'Password changed.' };

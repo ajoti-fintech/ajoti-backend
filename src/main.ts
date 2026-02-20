@@ -5,11 +5,29 @@ import { ConfigService } from '@nestjs/config';
 import { AppModule } from './app.module';
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
 import { NestExpressApplication } from '@nestjs/platform-express';
+import { Transport } from '@nestjs/microservices';
 
 async function bootstrap() {
   const app = await NestFactory.create<NestExpressApplication>(AppModule);
   const configService = app.get(ConfigService);
   const logger = new Logger('Bootstrap');
+
+  // Kafka microservice setup
+  app.connectMicroservice({
+    transport: Transport.KAFKA,
+    options: {
+      client: {
+        clientId: configService.get<string>('KAFKA_CLIENT_ID', 'ajoti-api'),
+        brokers: [configService.get<string>('KAFKA_BROKERS', 'kafka:29092')]
+      },
+      consumer: {
+        groupId: configService.get<string>(
+          'KAFKA_GROUP_ID',
+          'ajoti-consumer',
+        ),
+      },
+    },
+  });
 
   // Global validation pipe
   app.useGlobalPipes(
@@ -62,6 +80,11 @@ async function bootstrap() {
       }
     },
   });
+
+  // Start the Kafka microservice
+  await app.startAllMicroservices();
+  logger.log('Kafka microservice started');
+
   await app.listen(port);
 
   logger.log(`Application is running on: http://localhost:${port}`);

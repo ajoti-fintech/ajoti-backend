@@ -25,6 +25,7 @@ import { TrustModule } from './modules/trust/trust.module';
 import { TransactionsModule } from './modules/transactions/transactions.module';
 import { ScheduleModule } from '@nestjs/schedule';
 import { FundingModule } from './modules/funding/funding.module';
+import { KafkaModule } from './modules/kafka/kafka.module';
 
 const ENV = process.env.NODE_ENV || 'development';
 
@@ -83,6 +84,7 @@ const ENV = process.env.NODE_ENV || 'development';
     TrustModule,
     TransactionsModule,
     FundingModule,
+    KafkaModule,
   ],
   providers: [
     AppService,
