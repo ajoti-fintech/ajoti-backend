@@ -26,6 +26,7 @@ import { TransactionsModule } from './modules/transactions/transactions.module';
 import { ScheduleModule } from '@nestjs/schedule';
 import { FundingModule } from './modules/funding/funding.module';
 import { KafkaModule } from './modules/kafka/kafka.module';
+import { NotificationModule } from './modules/notification/notification.module';
 
 const ENV = process.env.NODE_ENV || 'development';
 
@@ -85,6 +86,7 @@ const ENV = process.env.NODE_ENV || 'development';
     TransactionsModule,
     FundingModule,
     KafkaModule,
+    NotificationModule,
   ],
   providers: [
     AppService,

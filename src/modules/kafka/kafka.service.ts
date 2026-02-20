@@ -9,7 +9,7 @@ export class KafkaService implements OnModuleInit {
     await this.kafka.connect();
   }
 
-  emit(topic: string, message: object) {
+  async emit(topic: string, message: object) {
     return this.kafka.emit(topic, message);
   }
 }

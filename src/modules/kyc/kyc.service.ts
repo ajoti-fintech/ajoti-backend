@@ -9,6 +9,7 @@ import { PrismaService } from 'src/prisma/prisma.service';
 import { IdentityVerificationService } from './identity-verification.service';
 import { KYCStatus, KYCStep, KYC } from '@prisma/client';
 import { VerifyNinDto, VerifyBvnDto, VerifyNokDto, KycResponseDto } from './dto/kyc.dto';
+import { KafkaService } from '../kafka/kafka.service';
 
 @Injectable()
 export class KycService {
@@ -16,6 +17,7 @@ export class KycService {
     private readonly configService: ConfigService,
     private readonly prisma: PrismaService,
     private readonly identityService: IdentityVerificationService,
+    private readonly kafkaService: KafkaService,
   ) {}
 
   /**
@@ -250,17 +252,30 @@ export class KycService {
       throw new BadRequestException('KYC must be submitted before approval');
     }
 
-    const updatedKyc = await this.prisma.kYC.update({
-      where: { userId },
-      data: {
-        status: KYCStatus.APPROVED,
-        reviewedAt: new Date(),
-        reviewedBy,
-        rejectionReason: null,
-        updatedAt: new Date(),
-      },
-    });
+    const [updatedKyc, user] = await Promise.all([
+      this.prisma.kYC.update({
+        where: { userId },
+        data: {
+          status: KYCStatus.APPROVED,
+          reviewedAt: new Date(),
+          reviewedBy,
+          rejectionReason: null,
+          updatedAt: new Date(),
+        },
+      }),
+      this.prisma.user.findUnique({
+        where: { id: userId },
+        select: { email: true, firstName: true, lastName: true },
+      }),
+    ]);
 
+    await this.kafkaService.emit('kyc.status.changed', {
+      userId,
+      email: user?.email,
+      fullName: `${user?.firstName} ${user?.lastName}`,
+      status: 'APPROVED',
+      timestamp: new Date().toISOString(),
+    });
     return this.mapToResponseDto(updatedKyc);
   }
 
@@ -284,15 +299,30 @@ export class KycService {
       throw new BadRequestException('KYC must be submitted before rejection');
     }
 
-    const updatedKyc = await this.prisma.kYC.update({
-      where: { userId },
-      data: {
-        status: KYCStatus.REJECTED,
-        reviewedAt: new Date(),
-        reviewedBy,
-        rejectionReason,
-        updatedAt: new Date(),
-      },
+    const [updatedKyc, user] = await Promise.all([
+      this.prisma.kYC.update({
+        where: { userId },
+        data: {
+          status: KYCStatus.REJECTED,
+          reviewedAt: new Date(),
+          reviewedBy,
+          rejectionReason,
+          updatedAt: new Date(),
+        },
+      }),
+      this.prisma.user.findUnique({
+        where: { id: userId },
+        select: { email: true, firstName: true, lastName: true },
+      }),
+    ]);
+
+    await this.kafkaService.emit('kyc.status.changed', {
+      userId,
+      email: user?.email,
+      fullName: `${user?.firstName} ${user?.lastName}`,
+      status: 'REJECTED',
+      reason: rejectionReason,
+      timestamp: new Date().toISOString(),
     });
 
     return this.mapToResponseDto(updatedKyc);
