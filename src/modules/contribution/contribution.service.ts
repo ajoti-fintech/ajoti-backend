@@ -23,9 +23,7 @@ export class ContributionService {
     private trustService: TrustService,
   ) {}
 
-  // =========================================================================
   // CONTRIBUTION — INTERNAL TRANSFER ONLY (R8)
-  // =========================================================================
 
   async makeContribution(userId: string, circleId: string, cycleNumber: number) {
     return await this.prisma.$transaction(
@@ -170,10 +168,8 @@ export class ContributionService {
     );
   }
 
-  // =========================================================================
   // CONTRIBUTION RETRIEVAL
-  // =========================================================================
-
+  
   /**
    * Get contribution history for a specific user in a circle
    */

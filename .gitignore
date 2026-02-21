@@ -8,7 +8,7 @@ build/
 
 # Environment files
 .env
-.env.local
+.env.localR
 .env.*.local
 .env.development
 .env.staging

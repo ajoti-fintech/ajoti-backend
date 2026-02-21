@@ -68,12 +68,19 @@ export class FlutterwaveService implements PaymentProvider {
 
   verifyWebhook(rawBody: string, signature: string): WebhookVerificationResult {
     try {
-      const computedHash = createHmac('sha256', this.webhookSecret).update(rawBody).digest('hex');
+      // Flutterwave uses HMAC-SHA256 with base64 encoding
+      const computedHash = createHmac('sha256', this.webhookSecret)
+        .update(rawBody)
+        .digest('base64');
+      
       if (computedHash === signature) {
         return { valid: true, payload: JSON.parse(rawBody) };
       }
+      
+      this.logger.warn(`Signature mismatch. Expected: ${computedHash.substring(0, 20)}..., Got: ${signature.substring(0, 20)}...`);
       return { valid: false, reason: 'HMAC mismatch' };
     } catch (error) {
+      this.logger.error('Webhook verification error:', error);
       return { valid: false, reason: 'Verification failed' };
     }
   }

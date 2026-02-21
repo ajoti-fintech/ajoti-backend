@@ -2,15 +2,16 @@
 import { Module } from '@nestjs/common';
 import { WebhooksController } from './webhooks.controller';
 import { WebhooksService } from './webhooks.service';
-import { PrismaModule } from '@/prisma/prisma.module';
+import { PrismaModule } from '@/prisma';
 import { TransactionsModule } from '../transactions/transactions.module'; // ← Added for provider verification
 import { LedgerModule } from '../ledger/ledger.module';
+import { FlutterwaveModule } from '../flutterwave/flutterwave.module';
 
 @Module({
   imports: [
-    LedgerModule,
+    FlutterwaveModule,
     PrismaModule,
-    TransactionsModule, // Provides FlutterwaveService, PaystackService, etc. for signature verification
+    TransactionsModule
   ],
   controllers: [WebhooksController],
   providers: [WebhooksService],

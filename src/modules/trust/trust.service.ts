@@ -6,10 +6,8 @@ import { Prisma } from '@prisma/client';
 export class TrustService {
   constructor(private prisma: PrismaService) {}
 
-  // =========================================================================
   // TRUST SCORE — SYSTEM DERIVED ONLY (R9)
-  // =========================================================================
-
+  
   async updateTrustScore(userId: string, event: { onTime: boolean }, tx: Prisma.TransactionClient) {
     const stats = await tx.userTrustStats.upsert({
       where: { userId },

@@ -36,7 +36,7 @@ export class FundingService {
       reference,
       type: TransactionType.FUNDING,
       status: TransactionStatus.PENDING,
-      currency: dto.currency || 'NGN',
+      currency: 'NGN',
       metadata: {
         paymentMethod: dto.paymentMethod,
         ...dto.metadata,

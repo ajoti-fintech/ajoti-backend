@@ -2,8 +2,7 @@ import { Module, MiddlewareConsumer, NestModule } from '@nestjs/common';
 import { ConfigModule, ConfigService } from '@nestjs/config';
 import { APP_GUARD } from '@nestjs/core';
 import { ThrottlerModule } from '@nestjs/throttler';
-import { RedisModule, RedisThrottlerStorage, RedisToken } from '@nestjs-redis/kit';
-
+import { ScheduleModule } from '@nestjs/schedule';
 import { HealthModule } from '@/modules/health/health.module';
 import { PrismaModule } from '@/prisma/prisma.module';
 import { LoggerMiddleware } from '@/common/interceptors/logger.middleware';
@@ -23,8 +22,8 @@ import { ContributionModule } from './modules/contribution/contribution.module';
 import { PayoutModule } from './modules/payout/payout.module';
 import { TrustModule } from './modules/trust/trust.module';
 import { TransactionsModule } from './modules/transactions/transactions.module';
-import { ScheduleModule } from '@nestjs/schedule';
 import { FundingModule } from './modules/funding/funding.module';
+import { WithdrawalModule } from './modules/withdrawal/withdrawal.module';
 
 const ENV = process.env.NODE_ENV || 'development';
 
@@ -36,27 +35,11 @@ const ENV = process.env.NODE_ENV || 'development';
       envFilePath: [`.env.${ENV}.local`, `.env.${ENV}`, '.env.local', '.env'],
     }),
 
-    //Redis-backed throttler (Redis connection lives inside this module scope)
+    ScheduleModule.forRoot(),
+
     ThrottlerModule.forRootAsync({
-      imports: [
-        ScheduleModule.forRoot(),
-        RedisModule.forRootAsync({
-          inject: [ConfigService],
-          useFactory: (config: ConfigService) => {
-            const host = config.get<string>('REDIS_HOST', 'localhost');
-            const port = config.get<number>('REDIS_PORT', 6379);
-            const password = config.get<string>('REDIS_PASSWORD'); // optional
-
-            const url = password
-              ? `redis://:${encodeURIComponent(password)}@${host}:${port}`
-              : `redis://${host}:${port}`;
-
-            return { options: { url } };
-          },
-        }),
-      ],
-      inject: [RedisToken(), ConfigService],
-      useFactory: (redis, config: ConfigService) => ({
+      inject: [ConfigService],
+      useFactory: (config: ConfigService) => ({
         throttlers: [
           {
             name: 'default',
@@ -64,13 +47,11 @@ const ENV = process.env.NODE_ENV || 'development';
             limit: config.get<number>('THROTTLE_LIMIT', 100),
           },
         ],
-        storage: new RedisThrottlerStorage(redis),
       }),
     }),
 
     PrismaModule,
     HealthModule,
-    //  feature/ajoti-wallet-system
     AuthModule,
     UsersModule,
     KycModule,
@@ -83,6 +64,7 @@ const ENV = process.env.NODE_ENV || 'development';
     TrustModule,
     TransactionsModule,
     FundingModule,
+    WithdrawalModule,
   ],
   providers: [
     AppService,
@@ -90,12 +72,10 @@ const ENV = process.env.NODE_ENV || 'development';
       provide: APP_GUARD,
       useClass: UserIdThrottlerGuard,
     },
-    KycService,
   ],
-  controllers: [KycController],
 })
 export class AppModule implements NestModule {
   configure(consumer: MiddlewareConsumer) {
-    consumer.apply(LoggerMiddleware).forRoutes('*');
+    consumer.apply(LoggerMiddleware).forRoutes('*path');
   }
 }

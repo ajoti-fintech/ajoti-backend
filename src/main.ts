@@ -1,6 +1,6 @@
 /* eslint-disable prettier/prettier */
 import { NestFactory, Reflector } from '@nestjs/core';
-import { ValidationPipe, Logger, ClassSerializerInterceptor } from '@nestjs/common';
+import { ValidationPipe, Logger, ClassSerializerInterceptor, RawBody } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { AppModule } from './app.module';
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
@@ -11,6 +11,14 @@ async function bootstrap() {
   const configService = app.get(ConfigService);
   const logger = new Logger('Bootstrap');
 
+  app.useBodyParser('json', {
+    verify: (req: any, _res: any, buf: Buffer) => {
+      if (buf && buf.length) {
+        req.rawBody = buf;
+      }
+    },
+  });
+  
   // Global validation pipe
   app.useGlobalPipes(
     new ValidationPipe({

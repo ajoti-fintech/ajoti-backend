@@ -9,6 +9,7 @@ import {
   IsEnum,
   IsOptional,
   IsObject,
+  IsIn,
 } from 'class-validator';
 
 export enum PaymentMethod {
@@ -50,10 +51,11 @@ export class InitializeFundingDto {
   @ApiPropertyOptional({
     example: 'NGN',
     default: 'NGN',
-    description: 'Currency code (ISO 4217)',
+    description: 'Currency — only NGN supported',
   })
   @IsString()
   @IsOptional()
+  @IsIn(['NGN'], { message: 'Only NGN (Nigerian Naira) is supported' })
   currency?: string = 'NGN';
 
   @ApiPropertyOptional({

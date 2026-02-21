@@ -8,7 +8,7 @@ import { PayoutAdminController, PayoutController } from './payout.controller';
 
 @Module({
   imports: [PrismaModule, LedgerModule, ScheduleModule],
-  controllers: [PayoutController, PayoutAdminController], // Add both here
+  controllers: [PayoutController, PayoutAdminController],
   providers: [PayoutService, PayoutSchedulerService],
   exports: [PayoutService],
 })
