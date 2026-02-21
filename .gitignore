@@ -14,6 +14,7 @@ build/
 .env.staging
 .env.production
 .env.wallet.example
+docker-compose.yml
 
 # IDE
 .idea/
