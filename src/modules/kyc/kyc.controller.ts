@@ -35,15 +35,15 @@ export class KycController {
     return this.kycService.getKycStatus(req.user.userId);
   }
 
-  @Post('initialize')
-  @Throttle({ default: { ttl: 600_000, limit: 5 } }) // 5/10min
-  @HttpCode(HttpStatus.CREATED)
-  @ApiOperation({ summary: 'Initialize KYC process for current user' })
-  @ApiResponse({ status: 201, description: 'KYC initialized successfully' })
-  async initializeKyc(@Request() req: AuthRequest): Promise<KycResponseDto> {
-    const kyc = await this.kycService.initializeKyc(req.user.userId);
-    return this.kycService.getKycStatus(kyc.userId);
-  }
+  // @Post('initialize')
+  // @Throttle({ default: { ttl: 600_000, limit: 5 } }) // 5/10min
+  // @HttpCode(HttpStatus.CREATED)
+  // @ApiOperation({ summary: 'Initialize KYC process for current user' })
+  // @ApiResponse({ status: 201, description: 'KYC initialized successfully' })
+  // async initializeKyc(@Request() req: AuthRequest): Promise<KycResponseDto> {
+  //   const kyc = await this.kycService.initializeKyc(req.user.userId);
+  //   return this.kycService.getKycStatus(kyc.userId);
+  // }
 
   @Post('verify-nin')
   @Throttle({ default: { ttl: 600_000, limit: 5 } }) // 5/10min

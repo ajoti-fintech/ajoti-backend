@@ -247,7 +247,7 @@ export class AuthService {
       data: { isVerified: true },
     });
 
-    await this.kafkaService.emit('auth.user.verified', {
+    await this.kafkaService.emit('auth.email.verified', {
       userId: user.id,
       email: user.email,
       timestamp: new Date().toISOString(),
@@ -326,7 +326,7 @@ export class AuthService {
       data: { revokedAt: new Date() },
     });
 
-    await this.kafkaService.emit('auth.user.password-reset', {
+    await this.kafkaService.emit('auth.password.reset', {
       userId: user.id,
       email: user.email,
       timestamp: new Date().toISOString(),
@@ -355,7 +355,7 @@ export class AuthService {
       data: { revokedAt: new Date() },
     });
 
-    await this.kafkaService.emit('auth.user.password-changed', {
+    await this.kafkaService.emit('auth.password.changed', {
       userId: user.id,
       email: user.email,
       timestamp: new Date().toISOString(),

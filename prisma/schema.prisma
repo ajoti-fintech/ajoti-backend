@@ -527,6 +527,8 @@ model User {
   roscaContributions  RoscaContribution[]
   roscaPayouts        RoscaPayout[]
   userTrustStats      UserTrustStats?
+
+  notifications       Notification[]
 }
 
 model UserProfile {
@@ -620,4 +622,38 @@ model SavedBankAccount {
 
   @@unique([userId, accountNumber, bankCode])
   @@map("saved_bank_accounts")
+}
+
+// Notification
+enum NotificationType {
+  EMAIL
+  IN_APP
+}
+
+enum NotificationStatus {
+  PENDING
+  SENT
+  FAILED
+}
+model Notification {
+  id        String   @id @default(uuid())
+  userId    String   @map("user_id")
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  type      NotificationType
+  title     String
+  body      String
+
+  status    NotificationStatus @default(PENDING)
+  sentAt  DateTime?
+  error String? // If failed
+
+  isRead Boolean @default(false)
+  readAt DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([userId, isRead])
+  @@index([userId, createdAt])
 }
