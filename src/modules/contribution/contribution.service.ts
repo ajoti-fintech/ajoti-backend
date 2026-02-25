@@ -1,4 +1,9 @@
-import { Injectable, BadRequestException, NotFoundException } from '@nestjs/common';
+import {
+  Injectable,
+  BadRequestException,
+  NotFoundException,
+  InternalServerErrorException,
+} from '@nestjs/common';
 import * as crypto from 'crypto';
 import { PrismaService } from '../../prisma/prisma.service';
 import { LedgerService } from '../ledger/ledger.service';
@@ -23,117 +28,176 @@ export class ContributionService {
     private trustService: TrustService,
   ) {}
 
-  // CONTRIBUTION — INTERNAL TRANSFER ONLY (R8)
-
-  async makeContribution(userId: string, circleId: string, cycleNumber: number) {
+  /**
+   * Make a cycle contribution — internal ledger transfer only (no Flutterwave).
+   *
+   * The user must have funded their wallet via the funding flow first.
+   * Contribution moves money from the user's MAIN balance → Platform Pool MAIN balance.
+   * The ROSCA bucket holds only the collateral RESERVE (set at join time) — separate.
+   *
+   * Flow:
+   *  1. Validate circle, membership, and schedule
+   *  2. Guard against duplicate contributions for the same cycle
+   *  3. Calculate late penalty (if past deadline)
+   *  4. DEBIT user wallet MAIN balance (contribution + penalty)
+   *  5. CREDIT platform pool MAIN balance
+   *  6. Record contribution
+   *  7. Update membership stats + trust score
+   */
+  async makeContribution(
+    userId: string,
+    circleId: string,
+    cycleNumber: number,
+  ) {
     return await this.prisma.$transaction(
       async (tx) => {
-        // 1. Get circle and membership with locks
+        // ── 1. Load & validate ─────────────────────────────────────────────
         const circle = await tx.roscaCircle.findUnique({
           where: { id: circleId },
           include: {
-            schedules: {
-              where: { cycleNumber, obsoletedAt: null },
-            },
-          },
-        });
-
-        const membership = await tx.roscaMembership.findUnique({
-          where: {
-            circleId_userId: { circleId, userId },
+            schedules: { where: { cycleNumber, obsoletedAt: null } },
           },
         });
 
         if (!circle) throw new NotFoundException('Circle not found');
         if (circle.status !== CircleStatus.ACTIVE) {
-          throw new BadRequestException('Circle not active');
+          throw new BadRequestException('Circle is not active');
         }
+
+        const membership = await tx.roscaMembership.findUnique({
+          where: { circleId_userId: { circleId, userId } },
+        });
+
         if (!membership || membership.status !== MembershipStatus.ACTIVE) {
-          throw new BadRequestException('Not an active member');
+          throw new BadRequestException('Not an active member of this circle');
         }
 
-        // 2. Pre-generate Contribution ID
-        const contributionId = crypto.randomUUID();
-
-        // 3. Penalty Logic
         const schedule = circle.schedules[0];
-        const isLate = new Date() > schedule.contributionDeadline;
-        const penalty = isLate
-          ? (circle.contributionAmount * BigInt(Math.round(circle.latePenaltyPercent * 100))) /
-            10000n
-          : 0n;
+        if (!schedule) {
+          throw new BadRequestException(
+            `No active schedule found for cycle ${cycleNumber}`,
+          );
+        }
 
-        // 4. System Wallets
+        // ── 2. Duplicate guard ────────────────────────────────────────────
+        // The schema has @@unique([circleId, membershipId, cycleNumber]) but
+        // we catch it here for a clean 400 instead of a raw P2002 500.
+        const existingContribution = await tx.roscaContribution.findUnique({
+          where: {
+            circleId_membershipId_cycleNumber: {
+              circleId,
+              membershipId: membership.id,
+              cycleNumber,
+            },
+          },
+        });
+        if (existingContribution) {
+          throw new BadRequestException(
+            `You have already contributed for cycle ${cycleNumber}`,
+          );
+        }
+
+        // ── 3. Wallets ─────────────────────────────────────────────────────
         const systemWallet = await tx.systemWallet.findUnique({
           where: { type: SystemWalletType.PLATFORM_POOL },
         });
-        const userWallet = await tx.wallet.findUnique({ where: { userId } });
+        if (!systemWallet) {
+          throw new InternalServerErrorException(
+            'Platform pool wallet not configured',
+          );
+        }
 
-        // 5. Ledger Movements (Internal Transfer R1/R8)
-        // Participant DEBIT -> Pool CREDIT
+        const userWallet = await tx.wallet.findUnique({ where: { userId } });
+        if (!userWallet) {
+          throw new NotFoundException('User wallet not found');
+        }
+
+        // ── 4. Penalty logic ───────────────────────────────────────────────
+        const isLate = new Date() > schedule.contributionDeadline;
+        const penalty = isLate
+          ? (circle.contributionAmount *
+              BigInt(Math.round(circle.latePenaltyPercent * 100))) /
+            10000n
+          : 0n;
+
+        // ── 5. Pre-generate IDs ────────────────────────────────────────────
+        // Generate contributionId before ledger writes so it can be used
+        // as sourceId immediately — required by the append-only ledger rule.
+        const contributionId = crypto.randomUUID();
         const debitRef = `CONTRIB-${crypto.randomUUID()}`;
+
+        // ── 6. Ledger movements ────────────────────────────────────────────
+        // IMPORTANT: Contributions are MAIN → MAIN transfers.
+        // CREDIT/DEBIT entries MUST use BucketType.MAIN (or omit bucketType).
+        // The ROSCA bucket only holds collateral RESERVES — not contribution flows.
+
+        // 6a. DEBIT user MAIN balance (contribution amount)
         const debitEntry = await this.ledger.writeEntry(
           {
-            walletId: userWallet!.id,
+            walletId: userWallet.id,
             entryType: EntryType.DEBIT,
             movementType: MovementType.TRANSFER,
-            bucketType: BucketType.ROSCA,
+            bucketType: BucketType.MAIN, // ← MAIN, not ROSCA
             amount: circle.contributionAmount,
             reference: debitRef,
             sourceType: LedgerSourceType.CONTRIBUTION,
-            sourceId: contributionId, // Passed immediately
-            metadata: { circleId, cycleNumber },
+            sourceId: contributionId,
+            metadata: { circleId, cycleNumber, isLate },
           },
           tx,
         );
 
-        // Platform pool credit
+        // 6b. CREDIT platform pool MAIN balance
         await this.ledger.writeEntry(
           {
-            walletId: systemWallet!.walletId,
+            walletId: systemWallet.walletId,
             entryType: EntryType.CREDIT,
             movementType: MovementType.TRANSFER,
-            bucketType: BucketType.ROSCA,
+            bucketType: BucketType.MAIN, // ← MAIN, not ROSCA
             amount: circle.contributionAmount,
             reference: `POOL-CRED-${crypto.randomUUID()}`,
             sourceType: LedgerSourceType.CONTRIBUTION,
             sourceId: contributionId,
-            metadata: { fromUserId: userId },
+            metadata: { fromUserId: userId, circleId, cycleNumber },
           },
           tx,
         );
 
-        // 6. Penalty Ledger Entries (If applicable)
-        if (penalty > 0) {
-          const pRef = `PEN-${crypto.randomUUID()}`;
+        // 6c. Penalty entries (only if late)
+        if (penalty > 0n) {
+          const penaltyRef = `PEN-${crypto.randomUUID()}`;
+
           await this.ledger.writeEntry(
             {
-              walletId: userWallet!.id,
+              walletId: userWallet.id,
               entryType: EntryType.DEBIT,
               movementType: MovementType.TRANSFER,
+              // No bucketType — defaults to MAIN in LedgerService
               amount: penalty,
-              reference: pRef,
+              reference: penaltyRef,
               sourceType: LedgerSourceType.PENALTY,
               sourceId: contributionId,
+              metadata: { circleId, cycleNumber, penaltyPercent: circle.latePenaltyPercent },
             },
             tx,
           );
 
           await this.ledger.writeEntry(
             {
-              walletId: systemWallet!.walletId,
+              walletId: systemWallet.walletId,
               entryType: EntryType.CREDIT,
               movementType: MovementType.TRANSFER,
               amount: penalty,
               reference: `POOL-PEN-${crypto.randomUUID()}`,
               sourceType: LedgerSourceType.PENALTY,
               sourceId: contributionId,
+              metadata: { fromUserId: userId, circleId, cycleNumber },
             },
             tx,
           );
         }
 
-        // 7. Record Contribution
+        // ── 7. Record contribution ─────────────────────────────────────────
         const contribution = await tx.roscaContribution.create({
           data: {
             id: contributionId,
@@ -148,37 +212,36 @@ export class ContributionService {
           },
         });
 
-        // 8. Update State
+        // ── 8. Update membership stats ─────────────────────────────────────
         await tx.roscaMembership.update({
           where: { id: membership.id },
           data: {
             completedCycles: { increment: 1 },
-            totalLatePayments: isLate ? { increment: 1 } : undefined,
-            totalPenaltiesPaid: penalty > 0 ? { increment: penalty } : undefined,
+            ...(isLate && { totalLatePayments: { increment: 1 } }),
+            ...(penalty > 0n && { totalPenaltiesPaid: { increment: penalty } }),
           },
         });
 
-        await this.trustService.updateTrustScore(userId, { onTime: !isLate }, tx);
+        // ── 9. Update trust score ──────────────────────────────────────────
+        await this.trustService.updateTrustScore(
+          userId,
+          { onTime: !isLate },
+          tx,
+        );
 
         return contribution;
       },
-      {
-        isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
-      },
+      { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
     );
   }
 
-  // CONTRIBUTION RETRIEVAL
-  
   /**
-   * Get contribution history for a specific user in a circle
+   * Get contribution history for a specific user in a circle.
    */
-  // src/modules/contribution/contribution.service.ts
-
   async getContributions(
     circleId: string,
     userId: string,
-    query: ListContributionsQueryDto = {}, // Default to empty object
+    query: ListContributionsQueryDto = {},
   ) {
     const { cycleNumber, limit, offset } = query;
 
@@ -186,10 +249,10 @@ export class ContributionService {
       where: {
         circleId,
         userId,
-        cycleNumber: cycleNumber, // Filters by cycle if provided
+        ...(cycleNumber !== undefined && { cycleNumber }),
       },
-      take: limit,
-      skip: offset,
+      take: limit ?? 20,
+      skip: offset ?? 0,
       orderBy: { cycleNumber: 'desc' },
     });
   }

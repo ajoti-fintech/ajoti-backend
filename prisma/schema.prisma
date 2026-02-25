@@ -29,38 +29,39 @@ model Wallet {
   updatedAt DateTime     @updatedAt @map("updated_at")
 
   // Relations
-  ledgerEntries LedgerEntry[]
-  buckets       WalletBucket[]
-  transactions  Transaction[]
-  systemWallet  SystemWallet?
+  ledgerEntries  LedgerEntry[]
+  buckets        WalletBucket[]
+  transactions   Transaction[]
+  systemWallet   SystemWallet?
+  virtualAccount VirtualAccount? // ← ADDED
 
   @@map("wallets")
 }
 
 enum WalletStatus {
-  ACTIVE // Normal operations allowed
+  ACTIVE     // Normal operations allowed
   RESTRICTED // Limited operations (e.g., can't withdraw)
-  SUSPENDED // No operations allowed
-  CLOSED // Wallet closed permanently
+  SUSPENDED  // No operations allowed
+  CLOSED     // Wallet closed permanently
 }
 
 // 2. Ledger (Append-only transaction log)
 // SOURCE OF TRUTH - Balance is derived from this table
 // CRITICAL: No updates, no deletes - append-only
 model LedgerEntry {
-  id            String           @id @default(uuid())
-  walletId      String           @map("wallet_id")
-  reference     String
-  entryType     EntryType        @map("entry_type")
-  movementType  MovementType     @map("movement_type")
-  bucketType    BucketType?      @map("bucket_type")
-  amount        BigInt // Store in kobo (smallest unit)
-  balanceBefore BigInt           @map("balance_before")
-  balanceAfter  BigInt           @map("balance_after")
-  metadata      Json? // Additional context (provider, event IDs, etc.)
-  createdAt     DateTime         @default(now()) @map("created_at")
-  sourceType    LedgerSourceType @map("source_type")
-  sourceId      String           @map("source_id")
+  id           String           @id @default(uuid())
+  walletId     String           @map("wallet_id")
+  reference    String
+  entryType    EntryType        @map("entry_type")
+  movementType MovementType     @map("movement_type")
+  bucketType   BucketType?      @map("bucket_type")
+  amount       BigInt           // Store in kobo (smallest unit)
+  balanceBefore BigInt          @map("balance_before")
+  balanceAfter  BigInt          @map("balance_after")
+  metadata     Json?            // Additional context (provider, event IDs, etc.)
+  createdAt    DateTime         @default(now()) @map("created_at")
+  sourceType   LedgerSourceType @map("source_type")
+  sourceId     String           @map("source_id")
 
   // Relations
   wallet Wallet @relation(fields: [walletId], references: [id])
@@ -72,38 +73,38 @@ model LedgerEntry {
 }
 
 enum EntryType {
-  CREDIT // Add money to total balance
-  DEBIT // Remove money from total balance
+  CREDIT  // Add money to total balance
+  DEBIT   // Remove money from total balance
   RESERVE // Lock money (doesn't change total, only available)
   RELEASE // Unlock money (doesn't change total, only available)
 }
 
 enum LedgerSourceType {
-  TRANSACTION // External funding/withdrawal
-  ROSCA_CIRCLE // General ROSCA movement
-  CONTRIBUTION // **NEW** – cycle contribution
-  COLLATERAL_RESERVE // **NEW** – join-circle collateral lock
-  COLLATERAL_RELEASE // **NEW** – collateral unlocked
-  PENALTY // **NEW** – late payment penalty
-  EXIT_PENALTY // **NEW** – early exit fee
-  TRUST_ADJUSTMENT // **NEW** – trust score change (admin)
-  ADMIN_ADJUSTMENT // Manual correction
-  REVERSAL // **NEW** – compensating entry for failure
-  SYSTEM // Automated internal jobs
+  TRANSACTION        // External funding/withdrawal
+  ROSCA_CIRCLE       // General ROSCA movement
+  CONTRIBUTION       // Cycle contribution
+  COLLATERAL_RESERVE // Join-circle collateral lock
+  COLLATERAL_RELEASE // Collateral unlocked
+  PENALTY            // Late payment penalty
+  EXIT_PENALTY       // Early exit fee
+  TRUST_ADJUSTMENT   // Trust score change (admin)
+  ADMIN_ADJUSTMENT   // Manual correction
+  REVERSAL           // Compensating entry for failure
+  SYSTEM             // Automated internal jobs
 }
 
 enum BucketType {
-  MAIN // The unreserved/spendable balance
-  ROSCA // Main Wallet <-> ROSCA Bucket
-  TARGET // Main Wallet <-> TARGET Bucket
-  FIXED // Main Wallet <-> FIXED Bucket
+  MAIN       // The unreserved/spendable balance
+  ROSCA      // Main Wallet <-> ROSCA Bucket
+  TARGET     // Main Wallet <-> TARGET Bucket
+  FIXED      // Main Wallet <-> FIXED Bucket
   REMITTANCE // Main Wallet <-> REMITTANCE Bucket
 }
 
 enum MovementType {
-  FUNDING // Money entering the system
+  FUNDING    // Money entering the system
   WITHDRAWAL // Money leaving the system
-  TRANSFER // Moving between MAIN and other buckets
+  TRANSFER   // Moving between wallets or buckets
 }
 
 // 3. Wallet Buckets (Logical fund locks)
@@ -120,22 +121,21 @@ model WalletBucket {
   // Relations
   wallet Wallet @relation(fields: [walletId], references: [id])
 
-  // One bucket per type per wallet
   @@unique([walletId, bucketType, sourceId])
   @@map("wallet_buckets")
 }
 
-// 4. External Transactions (Flutterwave tracking) 
+// 4. External Transactions (Flutterwave tracking)
 model Transaction {
   id          String            @id @default(uuid())
   walletId    String            @map("wallet_id")
   provider    String            @default("FLUTTERWAVE")
-  reference   String            @unique // Flutterwave tx_ref
-  amount      BigInt // Amount in kobo
+  reference   String            @unique // Our internal tx_ref
+  amount      BigInt            // Amount in kobo
   currency    String            @default("NGN")
   status      TransactionStatus
   type        TransactionType   @map("transaction_type")
-  metadata    Json? // Provider-specific data
+  metadata    Json?             // Provider-specific data
   completedAt DateTime?         @map("completed_at")
   createdAt   DateTime          @default(now()) @map("created_at")
   updatedAt   DateTime          @updatedAt @map("updated_at")
@@ -143,7 +143,6 @@ model Transaction {
   // Relations
   wallet Wallet @relation(fields: [walletId], references: [id])
 
-  // Indexes
   @@index([walletId])
   @@index([reference])
   @@index([status])
@@ -152,14 +151,14 @@ model Transaction {
 }
 
 enum TransactionType {
-  FUNDING // Money coming in (Flutterwave → Wallet)
+  FUNDING    // Money coming in (Flutterwave → Wallet)
   WITHDRAWAL // Money going out (Wallet → Bank)
 }
 
 enum TransactionStatus {
   PENDING // Initiated, waiting for confirmation
   SUCCESS // Confirmed successful
-  FAILED // Failed or reversed
+  FAILED  // Failed or reversed
 }
 
 // 5. Webhook Idempotency
@@ -167,15 +166,53 @@ enum TransactionStatus {
 // CRITICAL: Check this before processing any webhook
 model WebhookEvent {
   id          String   @id @default(uuid())
-  provider    String // FLUTTERWAVE, etc.
+  provider    String   // FLUTTERWAVE, etc.
   eventId     String   @unique @map("event_id") // Provider's event ID
   processedAt DateTime @default(now()) @map("processed_at")
-  payload     Json? // Full webhook payload for debugging
+  payload     Json?    // Full webhook payload for debugging
 
-  // Indexes
   @@index([eventId])
   @@index([provider])
   @@map("webhook_events")
+}
+
+// 6. Virtual Accounts
+// One permanent Wema Bank account number per user.
+// Anyone sending NGN to this account triggers a charge.completed webhook
+// with payment_type='bank_transfer' and tx_ref = our stable AJOTI-VA-{userId}.
+//
+// Idempotency for VA credits uses flw_ref (unique per incoming payment),
+// NOT tx_ref (which is static and reused for every payment to the same VA).
+model VirtualAccount {
+  id String @id @default(uuid())
+
+  // One per user
+  userId String @unique @map("user_id")
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  // Linked to the user's wallet for ledger writes
+  walletId String @unique @map("wallet_id")
+  wallet   Wallet @relation(fields: [walletId], references: [id])
+
+  // FLW-provided identifiers
+  accountNumber String @map("account_number")
+  bankName      String @map("bank_name")
+  accountName   String @map("account_name")
+  flwRef        String @unique @map("flw_ref")   // FLW's internal reference
+  orderRef      String @unique @map("order_ref") // Used to query VA status via FLW API
+
+  // Our stable reference — format: AJOTI-VA-{userId}
+  // This is the tx_ref that appears in every charge.completed for this VA
+  txRef String @unique @map("tx_ref")
+
+  currency    String  @default("NGN")
+  isActive    Boolean @default(true) @map("is_active")
+  isPermanent Boolean @default(true) @map("is_permanent")
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@map("virtual_accounts")
 }
 
 // ============================================================================
@@ -194,11 +231,11 @@ model SystemWallet {
 }
 
 enum SystemWalletType {
-  PLATFORM_POOL // Holds all undispersed ROSCA funds
+  PLATFORM_POOL  // Holds all undispersed ROSCA funds
   RECIPIENT_BASE // Template wallet for payouts (cloned per recipient)
 }
 
-// 2. ROSCA CIRCLES — UNCOMMENT AND EXTEND
+// 2. ROSCA CIRCLES
 model RoscaCircle {
   id          String  @id @default(uuid())
   name        String
@@ -238,7 +275,6 @@ model RoscaCircle {
   autoStartOnFull     Boolean   @default(false) @map("auto_start_on_full")
   verifiedAt          DateTime? @map("verified_at")
 
-  // Metadata
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
 
@@ -300,7 +336,7 @@ model RoscaMembership {
   // Timestamps
   joinedAt    DateTime? @map("joined_at")
   approvedAt  DateTime? @map("approved_at")
-  completedAt DateTime? @map("completed_at") // When circle done
+  completedAt DateTime? @map("completed_at")
   createdAt   DateTime  @default(now()) @map("created_at")
   updatedAt   DateTime  @updatedAt @map("updated_at")
 
@@ -331,7 +367,7 @@ model RoscaCycleSchedule {
   status               ScheduleStatus @default(UPCOMING)
 
   // Pot is DERIVED from ledger, NOT stored
-  recipientId String? @map("recipient_id") // Set after payout
+  recipientId String? @map("recipient_id")
   recipient   User?   @relation(fields: [recipientId], references: [id])
 
   // Soft delete support — if admin regenerates schedules
@@ -343,7 +379,7 @@ model RoscaCycleSchedule {
   // Relations
   payout RoscaPayout?
 
-  @@unique([circleId, cycleNumber, obsoletedAt]) // Allow regeneration
+  @@unique([circleId, cycleNumber, obsoletedAt])
   @@map("rosca_cycle_schedules")
 }
 
@@ -369,7 +405,7 @@ model RoscaContribution {
   penaltyAmount BigInt @default(0) @map("penalty_amount")
 
   // References
-  ledgerDebitId        String? @map("ledger_debit_id") // Link to LedgerEntry
+  ledgerDebitId        String? @map("ledger_debit_id")       // Link to LedgerEntry
   transactionReference String? @map("transaction_reference") // Internal ref
 
   paidAt    DateTime @default(now()) @map("paid_at")
@@ -390,7 +426,7 @@ model RoscaPayout {
   recipientId String @map("recipient_id")
   recipient   User   @relation(fields: [recipientId], references: [id])
 
-  amount BigInt // Kobo — derived from ledger, stored for performance
+  amount BigInt       // Kobo — derived from ledger, stored for performance
   status PayoutStatus @default(PENDING)
 
   // Provider tracking
@@ -399,10 +435,10 @@ model RoscaPayout {
   internalReference String? @map("internal_reference") // PAYOUT-{uuid}
 
   // Ledger links
-  poolDebitId       String? @map("pool_debit_id") // LedgerEntry ID
+  poolDebitId       String? @map("pool_debit_id")       // LedgerEntry ID
   recipientCreditId String? @map("recipient_credit_id") // LedgerEntry ID
-  reversalDebitId   String? @map("reversal_debit_id") // If failed
-  reversalCreditId  String? @map("reversal_credit_id") // If failed
+  reversalDebitId   String? @map("reversal_debit_id")   // If failed
+  reversalCreditId  String? @map("reversal_credit_id")  // If failed
 
   processedAt DateTime? @map("processed_at")
   failedAt    DateTime? @map("failed_at")
@@ -426,10 +462,10 @@ model UserTrustStats {
   user   User   @relation(fields: [userId], references: [id])
 
   trustScore              Int   @default(50) // 0-100, system calculated
-  completionRate          Float @default(0) // % of completed cycles
+  completionRate          Float @default(0)  // % of completed cycles
   totalRoscasJoined       Int   @default(0) @map("total_roscas_joined")
   totalRoscasCompleted    Int   @default(0) @map("total_roscas_completed")
-  totalOnTimePayments       Int   @default(0) @map("total_on_time_payments")
+  totalOnTimePayments     Int   @default(0) @map("total_on_time_payments")
   totalLatePayments       Int   @default(0) @map("total_late_payments")
   totalDefaults           Int   @default(0) @map("total_defaults")
   consecutiveLatePayments Int   @default(0) @map("consecutive_late_payments")
@@ -447,17 +483,16 @@ model UserTrustStats {
 // 8. AUDIT LOG — IMMUTABLE RECORD OF ADMIN ACTIONS
 model AuditLog {
   id        String @id @default(uuid())
-  actorId   String @map("actor_id") // User ID of admin/system
+  actorId   String @map("actor_id")   // User ID of admin/system
   actorType String @map("actor_type") // ADMIN, SYSTEM, USER
 
   action     String // e.g., "CIRCLE_VERIFIED", "SCHEDULE_REGENERATED"
   entityType String @map("entity_type") // ROSCA_CIRCLE, WALLET, etc.
   entityId   String @map("entity_id")
 
-  before Json? // State before change
-  after  Json? // State after change
-
-  reason   String? // Required for sensitive actions
+  before Json?   // State before change
+  after  Json?   // State after change
+  reason String? // Required for sensitive actions
   metadata Json? // IP, userAgent, etc.
 
   createdAt DateTime @default(now()) @map("created_at")
@@ -467,6 +502,10 @@ model AuditLog {
   @@index([createdAt(sort: Desc)])
   @@map("audit_logs")
 }
+
+// ============================================================================
+// USER & AUTH MODELS
+// ============================================================================
 
 enum Role {
   MEMBER
@@ -499,27 +538,25 @@ enum Gender {
 }
 
 model User {
-  id        String   @id @default(uuid())
-  email     String   @unique
-  firstName String
-  lastName  String
-  password  String
-  dob       DateTime @default(now())
-  gender    Gender
-  phone     String
-  role      Role     @default(MEMBER)
-  wallet    Wallet?
-
+  id         String  @id @default(uuid())
+  email      String  @unique
+  firstName  String
+  lastName   String
+  password   String
+  dob        DateTime @default(now())
+  gender     Gender
+  phone      String
+  role       Role    @default(MEMBER)
   isVerified Boolean @default(false)
 
-  profile UserProfile?
-  kyc     KYC?
+  // Relations
+  wallet         Wallet?
+  profile        UserProfile?
+  kyc            KYC?
+  virtualAccount VirtualAccount? // ← ADDED
 
-  refreshTokens RefreshToken[]
-  otps          OtpCode[]
-
-  createdAt           DateTime             @default(now())
-  updatedAt           DateTime             @updatedAt
+  refreshTokens       RefreshToken[]
+  otps                OtpCode[]
   savedBankAccounts   SavedBankAccount[]
   roscaCircles        RoscaCircle[]
   roscaMemberships    RoscaMembership[]
@@ -527,6 +564,9 @@ model User {
   roscaContributions  RoscaContribution[]
   roscaPayouts        RoscaPayout[]
   userTrustStats      UserTrustStats?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 }
 
 model UserProfile {
@@ -544,7 +584,7 @@ model KYC {
   id     String    @id @default(uuid())
   userId String    @unique
   user   User      @relation(fields: [userId], references: [id], onDelete: Cascade)
-  // workflow control
+
   status KYCStatus @default(NOT_SUBMITTED)
   step   KYCStep   @default(NIN_REQUIRED)
 

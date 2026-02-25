@@ -7,14 +7,13 @@ import { HealthModule } from '@/modules/health/health.module';
 import { PrismaModule } from '@/prisma/prisma.module';
 import { LoggerMiddleware } from '@/common/interceptors/logger.middleware';
 import { appConfig } from '@/config/app.config';
+import { flutterwaveConfig } from '@/config/flutterwave.config'; // ← NEW
 import { WalletModule } from './modules/wallet/wallet.module';
 import { WebhooksModule } from './modules/webhooks/webhooks.module';
 import { AuthModule } from './modules/auth/auth.module';
 import { UsersModule } from './modules/users/users.module';
 import { MailModule } from './modules/mail/mail.module';
 import { AppService } from './app.service';
-import { KycController } from './modules/kyc/kyc.controller';
-import { KycService } from './modules/kyc/kyc.service';
 import { KycModule } from './modules/kyc/kyc.module';
 import { UserIdThrottlerGuard } from './guard/userid-throttler.guard';
 import { RoscaModule } from './modules/rosca/rosca.module';
@@ -24,6 +23,7 @@ import { TrustModule } from './modules/trust/trust.module';
 import { TransactionsModule } from './modules/transactions/transactions.module';
 import { FundingModule } from './modules/funding/funding.module';
 import { WithdrawalModule } from './modules/withdrawal/withdrawal.module';
+import { VirtualAccountModule } from './modules/virtual-accounts/virtual-account.module'; // ← NEW
 
 const ENV = process.env.NODE_ENV || 'development';
 
@@ -31,7 +31,7 @@ const ENV = process.env.NODE_ENV || 'development';
   imports: [
     ConfigModule.forRoot({
       isGlobal: true,
-      load: [appConfig],
+      load: [appConfig, flutterwaveConfig], // ← flutterwaveConfig added
       envFilePath: [`.env.${ENV}.local`, `.env.${ENV}`, '.env.local', '.env'],
     }),
 
@@ -65,6 +65,7 @@ const ENV = process.env.NODE_ENV || 'development';
     TransactionsModule,
     FundingModule,
     WithdrawalModule,
+    VirtualAccountModule,
   ],
   providers: [
     AppService,

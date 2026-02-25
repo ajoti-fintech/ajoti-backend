@@ -1,8 +1,10 @@
 import { Module } from '@nestjs/common';
+import { ConfigModule } from '@nestjs/config';
 import { FlutterwaveProvider } from './flutterwave.provider';
 
 @Module({
-    providers: [FlutterwaveProvider],
-    exports: [FlutterwaveProvider],
+  imports: [ConfigModule], // Needed for ConfigService in FlutterwaveProvider
+  providers: [FlutterwaveProvider],
+  exports: [FlutterwaveProvider],
 })
-export class FlutterwaveModule { }
+export class FlutterwaveModule {}
