@@ -8,12 +8,13 @@ build/
 
 # Environment files
 .env
-.env.local
+.env.localR
 .env.*.local
 .env.development
 .env.staging
 .env.production
 .env.wallet.example
+docker-compose.yml
 
 # IDE
 .idea/

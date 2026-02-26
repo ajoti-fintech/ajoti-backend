@@ -4,17 +4,19 @@ import { FundingService } from './funding.service';
 import { WalletModule } from '../wallet/wallet.module';
 import { LedgerModule } from '../ledger/ledger.module';
 import { TransactionsModule } from '../transactions/transactions.module';
+import { FlutterwaveModule } from '../flutterwave/flutterwave.module';
 import { AuthModule } from '../auth/auth.module';
 
 @Module({
   imports: [
-    WalletModule, // To get user wallet
-    LedgerModule, // To write ledger entries
-    TransactionsModule, // To create/update transactions and call Flutterwave
-    AuthModule, // For guards
+    WalletModule,      // WalletService — validate wallet status
+    LedgerModule,      // Available for ledger reads if needed
+    TransactionsModule, // TransactionsService — create/update transaction records
+    FlutterwaveModule, // FlutterwaveProvider — initiate payments
+    AuthModule,        // JwtAuthGuard
   ],
   controllers: [FundingController],
   providers: [FundingService],
-  exports: [FundingService], // For webhooks module
+  exports: [FundingService],
 })
 export class FundingModule {}

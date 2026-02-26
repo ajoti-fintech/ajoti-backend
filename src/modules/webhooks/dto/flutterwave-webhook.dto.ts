@@ -80,3 +80,41 @@ export class FlutterwaveWebhookDto {
   @Type(() => WebhookDataDto)
   data: WebhookDataDto;
 }
+
+export interface FlwChargeData {
+  id: number;           // FLW transaction ID
+  tx_ref: string;       // Our internal reference (e.g. AJT-FUND-{uuid})
+  flw_ref: string;
+  amount: number;       // In Naira
+  currency: string;
+  charged_amount: number;
+  status: 'successful' | 'failed';
+  customer: {
+    id: number;
+    name: string;
+    email: string;
+    phone_number: string | null;
+  };
+}
+
+export interface FlwTransferData {
+  id: number;
+  account_number: string;
+  bank_name: string;
+  bank_code: string;
+  fullname: string;
+  created_at: string;
+  currency: string;
+  amount: number;       // In Naira
+  fee: number;
+  status: 'SUCCESSFUL' | 'FAILED' | 'NEW' | 'PENDING';
+  reference: string;   // Our internal reference (e.g. WITHDRAWAL-{uuid})
+  narration: string;
+  complete_message: string;
+}
+
+export class FlwWebhookPayload {
+  event: string;
+  'event.type': string;
+  data: FlwChargeData | FlwTransferData;
+}

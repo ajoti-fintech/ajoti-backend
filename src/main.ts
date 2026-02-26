@@ -1,6 +1,6 @@
 /* eslint-disable prettier/prettier */
 import { NestFactory, Reflector } from '@nestjs/core';
-import { ValidationPipe, Logger, ClassSerializerInterceptor } from '@nestjs/common';
+import { ValidationPipe, Logger, ClassSerializerInterceptor, RawBody } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { AppModule } from './app.module';
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
@@ -18,14 +18,19 @@ async function bootstrap() {
     options: {
       client: {
         clientId: configService.get<string>('KAFKA_CLIENT_ID', 'ajoti-api'),
-        brokers: [configService.get<string>('KAFKA_BROKERS', 'kafka:29092')]
+        brokers: [configService.get<string>('KAFKA_BROKERS', 'kafka:29092')],
       },
       consumer: {
-        groupId: configService.get<string>(
-          'KAFKA_GROUP_ID',
-          'ajoti-consumer',
-        ),
+        groupId: configService.get<string>('KAFKA_GROUP_ID', 'ajoti-consumer'),
       },
+    },
+  });
+
+  app.useBodyParser('json', {
+    verify: (req: any, _res: any, buf: Buffer) => {
+      if (buf && buf.length) {
+        req.rawBody = buf;
+      }
     },
   });
 
