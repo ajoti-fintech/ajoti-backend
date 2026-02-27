@@ -26,6 +26,7 @@ import { KafkaModule } from './modules/kafka/kafka.module';
 import { NotificationModule } from './modules/notification/notification.module';
 import { WithdrawalModule } from './modules/withdrawal/withdrawal.module';
 import { VirtualAccountModule } from './modules/virtual-accounts/virtual-account.module'; // ← NEW
+import { OtpModule } from './modules/otp/otp.module';
 
 const ENV = process.env.NODE_ENV || 'development';
 
@@ -70,6 +71,7 @@ const ENV = process.env.NODE_ENV || 'development';
     NotificationModule,
     WithdrawalModule,
     VirtualAccountModule,
+    OtpModule,
   ],
   providers: [
     AppService,

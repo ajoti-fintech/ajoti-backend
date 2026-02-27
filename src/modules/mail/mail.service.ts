@@ -19,11 +19,17 @@ export class MailService {
 
     if (!auth) throw new Error('MAIL_USER/MAIL_PASS not set');
 
+    const isSMTPS = port === 465;
+
     this.transporter = nodemailer.createTransport({
       host,
       port,
-      secure: port === 456,
+      secure: isSMTPS,
+      requireTLS: !isSMTPS,
       auth,
+      tls: {
+        minVersion: 'TLSv1.2',
+      },
     });
   }
 

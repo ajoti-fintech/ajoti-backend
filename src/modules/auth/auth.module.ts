@@ -8,6 +8,7 @@ import { JwtStrategy } from './jwt.strategy';
 import { PassportModule } from '@nestjs/passport';
 import { ConfigModule, ConfigService } from '@nestjs/config';
 import { KafkaModule } from '../kafka/kafka.module';
+import { OtpModule } from '../otp/otp.module';
 
 @Module({
   imports: [
@@ -22,6 +23,7 @@ import { KafkaModule } from '../kafka/kafka.module';
         secret: cfg.get<string>('JWT_ACCESS_SECRET'),
       }),
     }),
+    OtpModule,
   ],
   controllers: [AuthController],
   providers: [AuthService, JwtStrategy],
