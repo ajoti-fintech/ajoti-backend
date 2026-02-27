@@ -516,6 +516,11 @@ enum Role {
 enum OTPPurpose {
   VERIFICATION
   RESET_PASSWORD
+  KYC_VERIFICATION
+
+  // Add more purposes as needed
+  // WITHDRAWAL_APPROVAL
+  // LOGIN_2FA
 }
 
 enum KYCStatus {
@@ -696,4 +701,25 @@ model Notification {
 
   @@index([userId, isRead])
   @@index([userId, createdAt])
+}
+
+enum MailJobStatus {
+  PENDING
+  SENT
+  FAILED
+}
+
+model MailOutbox {
+  id        String   @id @default(uuid())
+  to        String
+  subject   String
+  html      String
+  status    MailJobStatus @default(PENDING)
+  attempts  Int           @default(0)
+  lastError String?
+  sentAt   DateTime?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([status, attempts])
 }

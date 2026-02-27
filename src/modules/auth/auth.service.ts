@@ -9,7 +9,6 @@ import {
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { JwtService } from '@nestjs/jwt';
-import { MailService } from '../mail/mail.service';
 import {
   ChangePasswordDto,
   ForgotPasswordDto,
@@ -18,12 +17,12 @@ import {
   VerifyEmailDto,
 } from './dto/auth.dto';
 import { OTPPurpose, Role } from '@prisma/client';
-import { generateOtpCode, hashValue, verifyHash } from '@/common';
+import { hashValue, verifyHash } from '@/common';
 import * as crypto from 'crypto';
 import { resetPasswordOtpTemplate } from '../mail/templates/otp-reset-password';
 import { verificationOtpTemplate } from '../mail/templates/otp-verification';
-import { MailErrorMapper } from '@/common/error/mail-error';
 import { KafkaService } from '../kafka/kafka.service';
+import { OtpService } from '../otp/otp.service';
 
 function sha256(input: string) {
   return crypto.createHash('sha256').update(input).digest('hex');
@@ -35,17 +34,11 @@ export class AuthService {
     private prisma: PrismaService,
     private config: ConfigService,
     private jwt: JwtService,
-    private mail: MailService,
-    private readonly mailErrorMapper: MailErrorMapper,
     private readonly kafkaService: KafkaService,
+    private readonly otpService: OtpService,
   ) {}
 
   private logger = new Logger('HTTP');
-
-  private otpExpiresAt() {
-    const mins = Number(this.config.get<string>('OTP_EXPIRES_MINUTES') || '10');
-    return new Date(Date.now() + mins * 60_000);
-  }
 
   private async issueTokens(userId: string, role: Role) {
     const access = await this.jwt.signAsync(
@@ -99,7 +92,10 @@ export class AuthService {
     });
 
     const fullName = `${registerDto.firstName} ${registerDto.lastName}`;
-    await this.sendOtp(registerDto.email, OTPPurpose.VERIFICATION, fullName);
+    await this.otpService.sendOtp(registerDto.email, OTPPurpose.VERIFICATION, {
+      subject: 'Verify your email',
+      buildHtml: (args) => verificationOtpTemplate(args.otp, args.expiryMinutes, fullName),
+    });
 
     await this.kafkaService.emit('auth.user.registered', {
       userId: user.id,
@@ -109,74 +105,6 @@ export class AuthService {
     });
 
     return { message: 'Registered, OTP sent to mail', userId: user.id };
-  }
-
-  async sendOtp(email: string, purpose: OTPPurpose, fullName: string) {
-    const user = await this.prisma.user.findUnique({ where: { email } });
-    if (!user) throw new BadRequestException('User not found');
-
-    await this.prisma.otpCode.updateMany({
-      where: { userId: user.id, purpose, usedAt: null },
-      data: { usedAt: new Date() },
-    });
-
-    const otp = generateOtpCode(6);
-    const codeHash = await hashValue(otp);
-
-    await this.prisma.otpCode.create({
-      data: {
-        userId: user.id,
-        purpose,
-        codeHash,
-        expiresAt: this.otpExpiresAt(),
-      },
-    });
-
-    const subject =
-      purpose === OTPPurpose.VERIFICATION ? 'Verify you account' : 'Reset your password';
-
-    const otpMinutes = Number(this.config.get<string>('OTP_EXPIRES_MINUTES') || '10');
-    const html =
-      purpose === OTPPurpose.VERIFICATION
-        ? verificationOtpTemplate(otp, otpMinutes, fullName)
-        : resetPasswordOtpTemplate(otp, otpMinutes, fullName);
-
-    try {
-      await this.mail.send(user.email, subject, html);
-    } catch (err) {
-      this.logger?.error?.('OTP email failed', err?.stack || err);
-
-      this.mailErrorMapper.map(err);
-    }
-
-    return { message: 'OTP Sent' };
-  }
-
-  private async consumeOtp(email: string, purpose: OTPPurpose, otp: string) {
-    const user = await this.prisma.user.findUnique({ where: { email } });
-    if (!user) throw new BadRequestException('User not found');
-
-    const record = await this.prisma.otpCode.findFirst({
-      where: {
-        userId: user.id,
-        purpose,
-        usedAt: null,
-        expiresAt: { gt: new Date() },
-      },
-      orderBy: { createdAt: 'desc' },
-    });
-
-    if (!record) throw new BadRequestException('Invalid or expired OTP');
-
-    const ok = await verifyHash(otp, record.codeHash);
-    if (!ok) throw new BadRequestException('Invalid or expired OTP');
-
-    await this.prisma.otpCode.update({
-      where: { id: record.id },
-      data: { usedAt: new Date() },
-    });
-
-    return user;
   }
 
   async resendVerificationOtp(email: string) {
@@ -190,21 +118,10 @@ export class AuthService {
     if (user.isVerified) throw new BadRequestException('Email already verified');
 
     const fullName = `${user.firstName} ${user.lastName}`;
-    await this.sendOtp(email, OTPPurpose.VERIFICATION, fullName);
-
-    // const cooldownSeconds = 60;
-    // const last = await this.prisma.otpCode.findFirst({
-    //   where: { userId: user.id, purpose: OTPPurpose.VERIFICATION },
-    //   orderBy: { createdAt: 'desc' },
-    //   select: { createdAt: true },
-    // });
-
-    // if (last) {
-    //   const elasped = (Date.now() - new Date(last.createdAt).getTime()) / 1000;
-    //   if (elasped < cooldownSeconds) {
-    //     throw new TooManyRequestsException('Wait 30 seconds then try again');
-    //   }
-    // }
+    await this.otpService.sendOtp(email, OTPPurpose.VERIFICATION, {
+      subject: 'Verify your email',
+      buildHtml: (args) => verificationOtpTemplate(args.otp, args.expiryMinutes, fullName),
+    });
   }
 
   async resendResetPasswordOtp(email: string) {
@@ -218,25 +135,14 @@ export class AuthService {
     if (user.isVerified) throw new BadRequestException('Email already verified');
 
     const fullName = `${user.firstName} ${user.lastName}`;
-    await this.sendOtp(email, OTPPurpose.RESET_PASSWORD, fullName);
-
-    // const cooldownSeconds = 60;
-    // const last = await this.prisma.otpCode.findFirst({
-    //   where: { userId: user.id, purpose: OTPPurpose.VERIFICATION },
-    //   orderBy: { createdAt: 'desc' },
-    //   select: { createdAt: true },
-    // });
-
-    // if (last) {
-    //   const elasped = (Date.now() - new Date(last.createdAt).getTime()) / 1000;
-    //   if (elasped < cooldownSeconds) {
-    //     throw new TooManyRequestsException('Wait 30 seconds then try again');
-    //   }
-    // }
+    await this.otpService.sendOtp(email, OTPPurpose.RESET_PASSWORD, {
+      subject: 'Reset your password',
+      buildHtml: (args) => resetPasswordOtpTemplate(args.otp, args.expiryMinutes, fullName),
+    });
   }
 
   async verifyEmail(verifyEmailDto: VerifyEmailDto) {
-    const user = await this.consumeOtp(
+    const user = await this.otpService.consumeOtp(
       verifyEmailDto.email,
       OTPPurpose.VERIFICATION,
       verifyEmailDto.otp,
@@ -300,14 +206,17 @@ export class AuthService {
 
     if (user) {
       const fullName = `${user.firstName} ${user.lastName}`;
-      await this.sendOtp(forgotPasswordDto.email, OTPPurpose.RESET_PASSWORD, fullName);
+      await this.otpService.sendOtp(forgotPasswordDto.email, OTPPurpose.RESET_PASSWORD, {
+        subject: 'Reset your password',
+        buildHtml: (args) => resetPasswordOtpTemplate(args.otp, args.expiryMinutes, fullName),
+      });
     }
 
     return { message: 'If the email exists, an OTP has been sent.' };
   }
 
   async resetPassword(resetPasswordDto: ResetPasswordDto) {
-    const user = await this.consumeOtp(
+    const user = await this.otpService.consumeOtp(
       resetPasswordDto.email,
       OTPPurpose.RESET_PASSWORD,
       resetPasswordDto.otp,
