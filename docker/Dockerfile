@@ -1,62 +1,58 @@
-# ---------deps-----------
+# ---------stage: deps-----------
 FROM node:24-alpine AS deps
 WORKDIR /app
 
 RUN corepack enable && corepack prepare pnpm@latest --activate
 
-# Copy minimal files for install + generate
+# Copy minimal files for install
 COPY package.json pnpm-lock.yaml ./
 COPY prisma ./prisma
-COPY prisma.config.ts ./
+# Copy config if it's required for the generate step
+COPY prisma.config.ts ./ 
 
 RUN pnpm install --frozen-lockfile
 
-
-# ---------builder-----------
+# ---------stage: builder-----------
 FROM node:24-alpine AS builder
 WORKDIR /app
 
 RUN corepack enable && corepack prepare pnpm@latest --activate
 
+# Bring in the installed node_modules
 COPY --from=deps /app/node_modules ./node_modules
-
-# Copy Prisma config & schema first
-COPY prisma ./prisma
-COPY prisma.config.ts ./
-
-# Dummy for generate (Prisma 7 requires it even if not connecting)
-ENV DATABASE_URL="postgresql://dummy:dummy@127.0.0.1:5432/dummy?schema=public"
-
-# Generate EARLY — this creates TS files that tsc needs to compile properly
-RUN npx prisma generate
-
-# Now bring in the rest of the code
 COPY . .
 
-# Build — generated client is now present for tsc to resolve everything
-RUN pnpm run build
+# Set a dummy URL so Prisma can generate the client without a DB connection
+ENV DATABASE_URL="postgresql://dummy:dummy@127.0.0.1:5432/dummy"
 
+# Generate the Prisma Client for the build step and then build NestJS
+RUN npx prisma generate && pnpm run build
 
-# ---------runner-----------
+# ---------stage: runner-----------
 FROM node:24-alpine AS runner
 WORKDIR /app
 
-# Enable corepack so pnpm is available if needed
 RUN corepack enable && corepack prepare pnpm@latest --activate
 
 ENV NODE_ENV=production
 
-# 1. Copy the production node_modules
-COPY --from=builder /app/node_modules ./node_modules
+# 1. Copy only files needed for a clean production install
+COPY package.json pnpm-lock.yaml ./
+COPY prisma ./prisma
+COPY prisma.config.ts ./
 
-# 2. CRITICAL: Copy the hidden .prisma folder where the actual runtime lives
-# This folder is often a symlink target that gets lost during basic COPY commands
-COPY --from=builder /app/node_modules/.prisma ./node_modules/.prisma
+# 2. Re-install ONLY production dependencies
+# This creates a flat, non-symlinked node_modules structure
+RUN pnpm install --prod --frozen-lockfile
 
-COPY --from=builder /app/package.json ./
+# 3. Regenerate the client for the runner environment
+ENV DATABASE_URL="postgresql://dummy:dummy@127.0.0.1:5432/dummy"
+RUN npx prisma generate
+
+# 4. Copy the compiled NestJS code from the builder
 COPY --from=builder /app/dist ./dist
-COPY --from=builder /app/prisma ./prisma
 
 EXPOSE 3000
 
+# Start the application
 CMD ["node", "dist/src/main.js"]
