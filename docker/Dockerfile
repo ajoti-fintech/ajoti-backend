@@ -5,6 +5,10 @@ WORKDIR /app
 RUN corepack enable && corepack prepare pnpm@latest --activate
 
 COPY package.json pnpm-lock.yaml ./
+COPY prisma ./prisma
+COPY prisma.config.ts ./
+
+
 RUN pnpm install --frozen-lockfile
 
 
@@ -15,13 +19,16 @@ WORKDIR /app
 RUN corepack enable && corepack prepare pnpm@latest --activate
 
 COPY --from=deps /app/node_modules ./node_modules
-COPY . .
 
-# ── This is the important line ────────────────────────────────
+COPY prisma ./prisma
+COPY prisma.config.ts ./
+
 # Dummy value — Prisma only needs it to exist (won't connect)
 ENV DATABASE_URL="postgresql://dummy:dummy@127.0.0.1:5432/dummy?schema=public"
 
 RUN npx prisma generate
+
+COPY . .
 
 RUN pnpm run build
 
@@ -34,16 +41,12 @@ RUN corepack enable && corepack prepare pnpm@latest --activate
 
 ENV NODE_ENV=production
 
-# Important: do NOT set DATABASE_URL here — let your deployment platform (Railway, Render, Fly, K8s, etc.) inject the real one
-# If you accidentally set a dummy here it will break runtime!
 
 COPY --from=builder /app/node_modules ./node_modules
 COPY --from=builder /app/package.json ./
 COPY --from=builder /app/dist ./dist
 COPY --from=builder /app/prisma ./prisma
 COPY --from=builder /app/prisma.config.ts ./
-
-# If you have a .env file or other config you want at runtime — copy it here (but usually better to use platform env vars)
 
 EXPOSE 3000
 
