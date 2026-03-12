@@ -4,10 +4,10 @@ WORKDIR /app
 
 RUN corepack enable && corepack prepare pnpm@latest --activate
 
+# Copy minimal files for install + generate
 COPY package.json pnpm-lock.yaml ./
 COPY prisma ./prisma
 COPY prisma.config.ts ./
-
 
 RUN pnpm install --frozen-lockfile
 
@@ -20,16 +20,20 @@ RUN corepack enable && corepack prepare pnpm@latest --activate
 
 COPY --from=deps /app/node_modules ./node_modules
 
+# Copy Prisma config & schema first
 COPY prisma ./prisma
 COPY prisma.config.ts ./
 
-# Dummy value — Prisma only needs it to exist (won't connect)
+# Dummy for generate (Prisma 7 requires it even if not connecting)
 ENV DATABASE_URL="postgresql://dummy:dummy@127.0.0.1:5432/dummy?schema=public"
 
+# Generate EARLY — this creates TS files that tsc needs to compile properly
 RUN npx prisma generate
 
+# Now bring in the rest of the code
 COPY . .
 
+# Build — generated client is now present for tsc to resolve everything
 RUN pnpm run build
 
 
@@ -41,23 +45,14 @@ RUN corepack enable && corepack prepare pnpm@latest --activate
 
 ENV NODE_ENV=production
 
-# Install OpenSSL (required for Prisma client)
-RUN apk add --no-cache openssl
+COPY --from=builder /app/node_modules ./node_modules
+COPY --from=builder /app/package.json ./
+COPY --from=builder /app/dist ./dist
+COPY --from=builder /app/prisma ./prisma
+COPY --from=builder /app/prisma.config.ts ./
 
-# Create non-root user
-RUN addgroup -g 1001 -S nodejs && \
-    adduser -S nodejs -u 1001
-
-COPY --from=builder --chown=nodejs:nodejs /app/node_modules ./node_modules
-COPY --from=builder --chown=nodejs:nodejs /app/package.json ./
-COPY --from=builder --chown=nodejs:nodejs /app/dist ./dist
-COPY --from=builder --chown=nodejs:nodejs /app/prisma ./prisma
-COPY --from=builder --chown=nodejs:nodejs /app/prisma.config.ts ./
-
-# Ensure Prisma client is properly linked
-RUN npx prisma generate --postinstall
-
-USER nodejs
+# Optional: Explicitly copy the generated Prisma client folder if symlinks break
+# COPY --from=builder /app/node_modules/.prisma ./node_modules/.prisma
 
 EXPOSE 3000
 
