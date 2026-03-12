@@ -44,3 +44,4 @@ tmp/
 temp/
 
 /generated/prisma
+docker/docker-compose.hybrid.yml
