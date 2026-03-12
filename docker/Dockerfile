@@ -41,18 +41,21 @@ RUN pnpm run build
 FROM node:24-alpine AS runner
 WORKDIR /app
 
+# Enable corepack so pnpm is available if needed
 RUN corepack enable && corepack prepare pnpm@latest --activate
 
 ENV NODE_ENV=production
 
+# 1. Copy the production node_modules
 COPY --from=builder /app/node_modules ./node_modules
+
+# 2. CRITICAL: Copy the hidden .prisma folder where the actual runtime lives
+# This folder is often a symlink target that gets lost during basic COPY commands
+COPY --from=builder /app/node_modules/.prisma ./node_modules/.prisma
+
 COPY --from=builder /app/package.json ./
 COPY --from=builder /app/dist ./dist
 COPY --from=builder /app/prisma ./prisma
-COPY --from=builder /app/prisma.config.ts ./
-
-# Optional: Explicitly copy the generated Prisma client folder if symlinks break
-# COPY --from=builder /app/node_modules/.prisma ./node_modules/.prisma
 
 EXPOSE 3000
 
