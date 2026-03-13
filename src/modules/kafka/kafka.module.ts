@@ -25,18 +25,21 @@ import { logLevel } from 'kafkajs';
                 ca: [fs.readFileSync(configService.get('KAFKA_CA_PATH')!, 'utf-8')],
               },
               sasl: {
-                mechanism: 'scram-sha-256', 
+                mechanism: 'scram-sha-256', // Aiven's standard
                 username: configService.get('KAFKA_USERNAME', 'avnadmin'),
                 password: configService.get('KAFKA_PASSWORD')!,
               },
-              // SECTION END
               logLevel: logLevel.DEBUG,
-    logCreator: (level) => {
-      return ({ namespace, label, log }) => {
-        const { message, ...extra } = log;
-        console.log(`[KAFKA_DEBUG] ${label}: ${message}`, JSON.stringify(extra));
-      };
+              logCreator: (level) => {
+                return ({ namespace, label, log }) => {
+                  const { message, ...extra } = log;
+                  // This will show up in Render as: [KAFKA_DEBUG] INFO: Connecting...
+                  console.log(`[KAFKA_DEBUG] ${label}: ${message}`, extra);
+                };
+              },
+              // SECTION END
             },
+
             consumer: {
               groupId: configService.get('KAFKA_GROUP_ID', 'ajoti-consumer'),
             },
