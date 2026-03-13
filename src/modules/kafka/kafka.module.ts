@@ -37,6 +37,7 @@ import * as fs from 'fs';
 
             consumer: {
               groupId: configService.get<string>('KAFKA_GROUP_ID', 'ajoti-consumer'),
+              allowAutoTopicCreation: true,
             },
           },
         }),

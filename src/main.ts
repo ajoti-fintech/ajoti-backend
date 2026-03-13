@@ -35,6 +35,7 @@ async function bootstrap() {
 
       consumer: {
         groupId: configService.get<string>('KAFKA_GROUP_ID', 'ajoti-consumer'),
+        allowAutoTopicCreation: true,
       },
     },
   });
