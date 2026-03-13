@@ -25,7 +25,7 @@ import * as fs from 'fs';
               ],
 
               ssl: {
-                ca: [fs.readFileSync(configService.get<string>('KAFKA_CA_PATH'), 'utf8')],
+                ca: [fs.readFileSync(configService.get('KAFKA_CA_PATH')!, 'utf8')],
               },
 
               sasl: {

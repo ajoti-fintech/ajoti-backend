@@ -6,6 +6,7 @@ import { AppModule } from './app.module';
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
 import { NestExpressApplication } from '@nestjs/platform-express';
 import { Transport } from '@nestjs/microservices';
+import * as fs from 'fs';
 
 async function bootstrap() {
   const app = await NestFactory.create<NestExpressApplication>(AppModule);
@@ -21,7 +22,9 @@ async function bootstrap() {
 
         brokers: configService.get<string>('KAFKA_BROKERS', 'kafka:29092').split(','),
 
-        ssl: true,
+        ssl: {
+          ca: [fs.readFileSync(configService.get('KAFKA_CA_PATH')!, 'utf8')],
+        },
 
         sasl: {
           mechanism: 'plain',
