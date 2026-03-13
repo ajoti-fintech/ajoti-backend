@@ -15,7 +15,15 @@ import { ConfigModule, ConfigService } from '@nestjs/config';
           options: {
             client: {
               clientId: configService.get('KAFKA_CLIENT_ID', 'ajoti-api'),
-              brokers: [configService.get('KAFKA_BROKER', 'kafka:29092')],
+              brokers: [configService.get('KAFKA_BROKERS')!],
+              // THIS SECTION IS JUST FOR TESTING ON RENDER USING AIVEN
+              ssl: true, // Required for Aiven
+              sasl: {
+                mechanism: 'scram-sha-256', // Aiven's standard
+                username: configService.get('KAFKA_USERNAME', 'avnadmin'),
+                password: configService.get('KAFKA_PASSWORD')!,
+              },
+              // SECTION END
             },
             consumer: {
               groupId: configService.get('KAFKA_GROUP_ID', 'ajoti-consumer'),
