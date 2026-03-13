@@ -67,7 +67,7 @@ const ENV = process.env.NODE_ENV || 'development';
     TrustModule,
     TransactionsModule,
     FundingModule,
-    // KafkaModule,
+    KafkaModule,
     NotificationModule,
     WithdrawalModule,
     VirtualAccountModule,

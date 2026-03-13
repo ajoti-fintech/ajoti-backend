@@ -18,8 +18,18 @@ async function bootstrap() {
     options: {
       client: {
         clientId: configService.get<string>('KAFKA_CLIENT_ID', 'ajoti-api'),
-        brokers: [configService.get<string>('KAFKA_BROKERS', 'kafka:29092')],
+
+        brokers: configService.get<string>('KAFKA_BROKERS', 'kafka:29092').split(','),
+
+        ssl: true,
+
+        sasl: {
+          mechanism: 'plain',
+          username: configService.get<string>('KAFKA_USERNAME'),
+          password: configService.get<string>('KAFKA_PASSWORD'),
+        },
       },
+
       consumer: {
         groupId: configService.get<string>('KAFKA_GROUP_ID', 'ajoti-consumer'),
       },

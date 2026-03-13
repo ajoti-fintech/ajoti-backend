@@ -14,11 +14,26 @@ import { ConfigModule, ConfigService } from '@nestjs/config';
           transport: Transport.KAFKA,
           options: {
             client: {
-              clientId: configService.get('KAFKA_CLIENT_ID', 'ajoti-api'),
-              brokers: [configService.get('KAFKA_BROKER', 'kafka:29092')],
+              clientId: configService.get<string>('KAFKA_CLIENT_ID', 'ajoti-api'),
+
+              brokers: [
+                configService.get<string>(
+                  'KAFKA_BROKER',
+                  'ajoti-kafka-1-ajoti-kafka.f.aivencloud.com:12178',
+                ),
+              ],
+
+              ssl: true,
+
+              sasl: {
+                mechanism: 'plain',
+                username: configService.get<string>('KAFKA_USERNAME')!,
+                password: configService.get<string>('KAFKA_PASSWORD')!,
+              },
             },
+
             consumer: {
-              groupId: configService.get('KAFKA_GROUP_ID', 'ajoti-consumer'),
+              groupId: configService.get<string>('KAFKA_GROUP_ID', 'ajoti-consumer'),
             },
           },
         }),
