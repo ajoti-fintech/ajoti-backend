@@ -16,7 +16,8 @@ import * as fs from 'fs';
           options: {
             client: {
               clientId: configService.get('KAFKA_CLIENT_ID', 'ajoti-api'),
-              brokers: [configService.get('KAFKA_BROKERS')!],
+              brokers: configService.get('KAFKA_BROKERS').split(','),
+
               // THIS SECTION IS JUST FOR TESTING ON RENDER USING AIVEN
               ssl: {
                 rejectUnauthorized: true,
