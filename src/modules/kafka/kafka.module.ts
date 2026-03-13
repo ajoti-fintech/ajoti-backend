@@ -2,6 +2,7 @@ import { Module } from '@nestjs/common';
 import { ClientsModule, Transport } from '@nestjs/microservices';
 import { KafkaService } from './kafka.service';
 import { ConfigModule, ConfigService } from '@nestjs/config';
+import * as fs from 'fs';
 
 @Module({
   imports: [
@@ -23,7 +24,9 @@ import { ConfigModule, ConfigService } from '@nestjs/config';
                 ),
               ],
 
-              ssl: true,
+              ssl: {
+                ca: [fs.readFileSync(configService.get<string>('KAFKA_CA_PATH'), 'utf8')],
+              },
 
               sasl: {
                 mechanism: 'plain',
