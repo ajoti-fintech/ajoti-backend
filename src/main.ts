@@ -14,31 +14,31 @@ async function bootstrap() {
   const logger = new Logger('Bootstrap');
 
   // Kafka microservice setup
-  app.connectMicroservice({
-    transport: Transport.KAFKA,
-    options: {
-      client: {
-        clientId: configService.get<string>('KAFKA_CLIENT_ID', 'ajoti-api'),
+  // app.connectMicroservice({
+  //   transport: Transport.KAFKA,
+  //   options: {
+  //     client: {
+  //       clientId: configService.get<string>('KAFKA_CLIENT_ID', 'ajoti-api'),
 
-        brokers: configService.get<string>('KAFKA_BROKERS', 'kafka:29092').split(','),
+  //       brokers: configService.get<string>('KAFKA_BROKERS', 'kafka:29092').split(','),
 
-        ssl: {
-          ca: [fs.readFileSync(configService.get('KAFKA_CA_PATH')!, 'utf8')],
-        },
+  //       ssl: {
+  //         ca: [fs.readFileSync(configService.get('KAFKA_CA_PATH')!, 'utf8')],
+  //       },
 
-        sasl: {
-          mechanism: 'plain',
-          username: configService.get<string>('KAFKA_USERNAME'),
-          password: configService.get<string>('KAFKA_PASSWORD'),
-        },
-      },
+  //       sasl: {
+  //         mechanism: 'plain',
+  //         username: configService.get<string>('KAFKA_USERNAME'),
+  //         password: configService.get<string>('KAFKA_PASSWORD'),
+  //       },
+  //     },
 
-      consumer: {
-        groupId: configService.get<string>('KAFKA_GROUP_ID', 'ajoti-consumer'),
-        allowAutoTopicCreation: true,
-      },
-    },
-  });
+  //     consumer: {
+  //       groupId: configService.get<string>('KAFKA_GROUP_ID', 'ajoti-consumer'),
+  //       allowAutoTopicCreation: true,
+  //     },
+  //   },
+  // });
 
   app.useBodyParser('json', {
     verify: (req: any, _res: any, buf: Buffer) => {
@@ -101,7 +101,7 @@ async function bootstrap() {
   });
 
   // Start the Kafka microservice
-  await app.startAllMicroservices();
+  // await app.startAllMicroservices();
   logger.log('Kafka microservice started');
 
   await app.listen(port);
