@@ -9,15 +9,36 @@ import {
   HttpCode,
   HttpStatus,
   Patch,
+  UseInterceptors,
+  BadRequestException,
 } from '@nestjs/common';
 import { KycService } from './kyc.service';
-import { VerifyNinDto, VerifyBvnDto, VerifyNokDto, KycResponseDto } from './dto/kyc.dto';
+import {
+  VerifyNinDto,
+  VerifyBvnDto,
+  VerifyNokDto,
+  VerifyAddressDto,
+  VerifyPhotoDto,
+  VerifyProofOfAddressDto,
+  KycResponseDto,
+} from './dto/kyc.dto';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../auth/guards/roles.guard';
 import { Roles } from '../../common/decorators/roles.decorator';
-import { ApiBearerAuth, ApiOperation, ApiResponse, ApiTags } from '@nestjs/swagger';
+import {
+  ApiBearerAuth,
+  ApiConsumes,
+  ApiOperation,
+  ApiResponse,
+  ApiTags,
+  ApiBody,
+} from '@nestjs/swagger';
 import { AuthRequest } from '@/common/types/auth-request';
 import { Throttle } from '@nestjs/throttler';
+import * as fs from 'fs';
+import * as path from 'path';
+import { FileFieldsInterceptor } from '@nestjs/platform-express';
+import { diskStorage } from 'multer';
 
 @ApiTags('KYC')
 @Controller('kyc')
@@ -25,6 +46,35 @@ import { Throttle } from '@nestjs/throttler';
 @ApiBearerAuth('access-token')
 export class KycController {
   constructor(private readonly kycService: KycService) {}
+
+  private static ensureDir(dir: string) {
+    if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+  }
+
+  private static safeFileName(originalname: string) {
+    const ext = path.extname(originalname).toLowerCase();
+    const base = path
+      .basename(originalname, ext)
+      .replace(/[^a-zA-Z0-9-_]/g, '_')
+      .slice(0, 50);
+    return { base, ext };
+  }
+
+  private static imageOnlyFilter(_req: any, file: Express.Multer.File, cb: any) {
+    const allowed = ['image/jpeg', 'image/png', 'image/webp'];
+    if (!allowed.includes(file.mimetype)) {
+      return cb(new BadRequestException('Only JPEG, PNG, WEBP images are allowed'), false);
+    }
+    cb(null, true);
+  }
+
+  private static imageOrPdfFilter(_req: any, file: Express.Multer.File, cb: any) {
+    const allowed = ['image/jpeg', 'image/png', 'image/webp', 'application/pdf'];
+    if (!allowed.includes(file.mimetype)) {
+      return cb(new BadRequestException('Only JPEG, PNG, WEBP or PDF files are allowed'), false);
+    }
+    cb(null, true);
+  }
 
   @Get('status')
   @Throttle({ default: { ttl: 60_000, limit: 20 } }) // 20/min
@@ -84,6 +134,148 @@ export class KycController {
     @Body() verifyNokDto: VerifyNokDto,
   ): Promise<KycResponseDto> {
     return this.kycService.submitNextOfKin(req.user.userId, verifyNokDto);
+  }
+
+  @Post('submit-address')
+  @Throttle({ default: { ttl: 600_000, limit: 5 } }) // 5/10min
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Submit Address information' })
+  @ApiResponse({ status: 200, description: 'Address submitted successfully' })
+  @ApiResponse({ status: 400, description: 'Invalid KYC step or data' })
+  async submitAddress(
+    @Request() req: AuthRequest,
+    @Body() verifyAddressDto: VerifyAddressDto,
+  ): Promise<KycResponseDto> {
+    return this.kycService.submitAddress(req.user.userId, verifyAddressDto);
+  }
+
+  @Post('submit-photo')
+  @Throttle({ default: { ttl: 600_000, limit: 5 } }) // 5/10min
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Submit photos for KYC verification' })
+  @ApiResponse({ status: 200, description: 'Photos submitted successfully' })
+  @ApiConsumes('multipart/form-data')
+  @UseInterceptors(
+    FileFieldsInterceptor(
+      [
+        { name: 'selfie', maxCount: 1 },
+        { name: 'governmentIdFront', maxCount: 1 },
+        { name: 'governmentIdBack', maxCount: 1 },
+      ],
+      {
+        limits: { fileSize: 1 * 1024 * 1024 }, // 1MB each
+        fileFilter: KycController.imageOnlyFilter,
+        storage: diskStorage({
+          destination: (req, file, cb) => {
+            const userId = (req.user as any)?.userId as string | undefined;
+            if (!userId) return cb(new BadRequestException('Unauthorized'), '');
+            const dir = path.join(process.cwd(), 'uploads', 'kyc', userId, 'photo');
+            KycController.ensureDir(dir);
+            cb(null, dir);
+          },
+          filename: (_req, file, cb) => {
+            const { base, ext } = KycController.safeFileName(file.originalname);
+            const stamp = Date.now();
+            cb(null, `${file.fieldname}_${base}_${stamp}${ext}`);
+          },
+        }),
+      },
+    ),
+  )
+  @ApiBody({
+    schema: {
+      type: 'object',
+      properties: {
+        governmentIdType: { type: 'string', example: 'DRIVERS_LICENSE' },
+        selfie: { type: 'string', format: 'binary' },
+        governmentIdFront: { type: 'string', format: 'binary' },
+        governmentIdBack: { type: 'string', format: 'binary' },
+      },
+      required: ['governmentIdType', 'selfie', 'governmentIdFront'],
+    },
+  })
+  async submitPhoto(
+    @Request() req: AuthRequest,
+    @Body() dto: VerifyPhotoDto,
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+    @Request() _reqDup: any,
+  ) {
+    // NOTE: Nest doesn't let two params share @Req reliably; ignore _reqDup if lint complains.
+    // We'll get files via req.files because FileFieldsInterceptor attaches them.
+    const userId = req?.user?.userId;
+    if (!userId) throw new BadRequestException('Unauthorized');
+
+    const files = req.files as
+      | {
+          selfie?: Express.Multer.File[];
+          governmentIdFront?: Express.Multer.File[];
+          governmentIdBack?: Express.Multer.File[];
+        }
+      | undefined;
+
+    const selfie = files?.selfie?.[0];
+    const front = files?.governmentIdFront?.[0];
+    const back = files?.governmentIdBack?.[0] ?? null;
+
+    if (!selfie) throw new BadRequestException('Selfie is required');
+    if (!front) throw new BadRequestException('Government ID front is required');
+
+    return this.kycService.submitPhoto(userId, dto, { selfie, front, back: back ?? undefined });
+  }
+
+  @Post('submit-proof-of-address')
+  @Throttle({ default: { ttl: 600_000, limit: 5 } }) // 5/10min
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Submit proof of address for KYC verification' })
+  @ApiResponse({ status: 200, description: 'Proof af address submitted successfully' })
+  @ApiConsumes('multipart/form-data')
+  @UseInterceptors(
+    FileFieldsInterceptor(
+      [
+        { name: 'selfie', maxCount: 1 },
+        { name: 'governmentIdFront', maxCount: 1 },
+        { name: 'governmentIdBack', maxCount: 1 },
+      ],
+      {
+        limits: { fileSize: 2 * 1024 * 1024 }, // 5MB each
+        fileFilter: KycController.imageOnlyFilter,
+        storage: diskStorage({
+          destination: (req, file, cb) => {
+            const userId = (req.user as any)?.userId as string | undefined;
+            if (!userId) return cb(new BadRequestException('Unauthorized'), '');
+            const dir = path.join(process.cwd(), 'uploads', 'kyc', userId, 'proof-of-address');
+            KycController.ensureDir(dir);
+            cb(null, dir);
+          },
+          filename: (_req, file, cb) => {
+            const { base, ext } = KycController.safeFileName(file.originalname);
+            const stamp = Date.now();
+            cb(null, `${file.fieldname}_${base}_${stamp}${ext}`);
+          },
+        }),
+      },
+    ),
+  )
+  @ApiBody({
+    schema: {
+      type: 'object',
+      properties: {
+        proofOfAddressType: { type: 'string', example: 'UTILITY_BILL' },
+        proofOfAddress: { type: 'string', format: 'binary' },
+      },
+      required: ['proofOfAddressType', 'proofOfAddress'],
+    },
+  })
+  async submitProofOfAddress(@Request() req: AuthRequest, @Body() dto: VerifyProofOfAddressDto) {
+    const userId = req?.user?.userId;
+    if (!userId) throw new BadRequestException('Unauthorized');
+
+    const files = req.files as { proofOfAddress?: Express.Multer.File[] } | undefined;
+    const doc = files?.proofOfAddress?.[0];
+
+    if (!doc) throw new BadRequestException('Proof of address file is required');
+
+    return this.kycService.submitProofOfAddress(userId, dto, doc);
   }
 
   // SUPERADMIN ENDPOINTS

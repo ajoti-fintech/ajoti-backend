@@ -8,8 +8,23 @@ import { ConfigService } from '@nestjs/config';
 import { PrismaService } from 'src/prisma/prisma.service';
 import { IdentityVerificationService } from './identity-verification.service';
 import { KYCStatus, KYCStep, KYC } from '@prisma/client';
-import { VerifyNinDto, VerifyBvnDto, VerifyNokDto, KycResponseDto } from './dto/kyc.dto';
+import {
+  VerifyNinDto,
+  VerifyBvnDto,
+  VerifyNokDto,
+  KycResponseDto,
+  VerifyAddressDto,
+  VerifyPhotoDto,
+  VerifyProofOfAddressDto,
+} from './dto/kyc.dto';
 import { KafkaService } from '../kafka/kafka.service';
+import * as path from 'path';
+
+type PhotoFiles = {
+  selfie: Express.Multer.File;
+  front: Express.Multer.File;
+  back?: Express.Multer.File;
+};
 
 @Injectable()
 export class KycService {
@@ -19,6 +34,11 @@ export class KycService {
     private readonly identityService: IdentityVerificationService,
     private readonly kafkaService: KafkaService,
   ) {}
+
+  private fileToPublicUrl(file: Express.Multer.File) {
+    const rel = path.relative(process.cwd(), file.path).split(path.sep).join('/'); // Normalize to forward slashes
+    return `/${rel}`;
+  }
 
   /**
    * Initialize KYC record for a user if it doesn't exist
@@ -237,6 +257,128 @@ export class KycService {
   }
 
   /**
+   * Submit Address information for verification
+   */
+  async submitAddress(userId: string, verifyAddressDto: VerifyAddressDto): Promise<KycResponseDto> {
+    const { address, city, state, lga, country } = verifyAddressDto;
+
+    // Get KYC record
+    const kycRecord = await this.prisma.kYC.findUnique({
+      where: { userId },
+    });
+
+    if (!kycRecord) {
+      throw new NotFoundException('KYC record not found. Please complete previous steps first.');
+    }
+
+    // Validate KYC step
+    if (kycRecord.step !== KYCStep.ADDRESS_REQUIRED) {
+      throw new BadRequestException(
+        `Invalid KYC step. Current step: ${kycRecord.step}. Expected: ${KYCStep.ADDRESS_REQUIRED}`,
+      );
+    }
+
+    // Update KYC record
+    const updatedKyc = await this.prisma.kYC.update({
+      where: { userId },
+      data: {
+        address,
+        city,
+        state,
+        lga,
+        country,
+        step: KYCStep.SUBMITTED,
+        status: KYCStatus.PENDING, // Changed to PENDING for review
+        submittedAt: new Date(),
+        updatedAt: new Date(),
+      },
+    });
+
+    return this.mapToResponseDto(updatedKyc);
+  }
+
+  /**
+   * Submit Photo for verification
+   */
+  async submitPhoto(
+    userId: string,
+    verifyPhotoDto: VerifyPhotoDto,
+    files: PhotoFiles,
+  ): Promise<KycResponseDto> {
+    const kycRecord = await this.prisma.kYC.findUnique({
+      where: { userId },
+    });
+
+    if (!kycRecord) {
+      throw new NotFoundException('KYC record not found. Please complete previous steps first.');
+    }
+
+    if (kycRecord.step !== KYCStep.PHOTO_REQUIRED) {
+      throw new BadRequestException(
+        `Invalid KYC step. Current step: ${kycRecord.step}. Expected: ${KYCStep.PHOTO_REQUIRED}`,
+      );
+    }
+
+    const { selfie, front, back } = files;
+    const selfieUrl = this.fileToPublicUrl(selfie);
+    const frontUrl = this.fileToPublicUrl(front);
+    const backUrl = back ? this.fileToPublicUrl(back) : null;
+
+    const updatedKyc = await this.prisma.kYC.update({
+      where: { userId },
+      data: {
+        selfieUrl,
+        governmentIdType: verifyPhotoDto.governmentIdType,
+        governmentIdFrontUrl: frontUrl,
+        governmentIdBackUrl: backUrl,
+        selfieUploadedAt: new Date(),
+        governmentIdUploadedAt: new Date(),
+        step: KYCStep.PROOF_OF_ADDRESS_REQUIRED,
+        status: KYCStatus.PENDING,
+        updatedAt: new Date(),
+      },
+    });
+
+    return this.mapToResponseDto(updatedKyc);
+  }
+
+  /**
+   * Submit Proof of Address for verification
+   */
+  async submitProofOfAddress(
+    userId: string,
+    verifyProofOfAddressDto: VerifyProofOfAddressDto,
+    file: Express.Multer.File,
+  ): Promise<KycResponseDto> {
+    const kycRecord = await this.prisma.kYC.findUnique({
+      where: { userId },
+    });
+
+    if (!kycRecord) {
+      throw new NotFoundException('KYC record not found. Please complete previous steps first.');
+    }
+
+    if (kycRecord.step !== KYCStep.PROOF_OF_ADDRESS_REQUIRED) {
+      throw new BadRequestException(
+        `Invalid KYC step. Current step: ${kycRecord.step}. Expected: ${KYCStep.PROOF_OF_ADDRESS_REQUIRED}`,
+      );
+    }
+
+    const proofOfAddressUrl = this.fileToPublicUrl(file);
+
+    const updatedKyc = await this.prisma.kYC.update({
+      where: { userId },
+      data: {
+        proofOfAddressUrl,
+        proofOfAddressType: verifyProofOfAddressDto.proofOfAddressType,
+        updatedAt: new Date(),
+      },
+    });
+
+    return this.mapToResponseDto(updatedKyc);
+  }
+
+  /**
    * Admin: Approve KYC
    */
   async approveKyc(userId: string, reviewedBy: string): Promise<KycResponseDto> {
@@ -337,10 +479,31 @@ export class KycService {
       userId: kyc.userId,
       status: kyc.status,
       step: kyc.step,
+
       nin: kyc.nin ?? undefined,
       bvn: kyc.bvn ?? undefined,
+
       nextOfKinName: kyc.nextOfKinName ?? undefined,
       nextOfKinRelationship: kyc.nextOfKinRelationship ?? undefined,
+      nextOfKinPhone: kyc.nextOfKinPhone ?? undefined,
+
+      // Address
+      address: kyc.address ?? undefined,
+      city: kyc.city ?? undefined,
+      state: kyc.state ?? undefined,
+      lga: kyc.lga ?? undefined,
+      country: kyc.country ?? undefined,
+
+      // Photo / ID
+      selfieUrl: kyc.selfieUrl ?? undefined,
+      governmentIdType: kyc.governmentIdType ?? undefined,
+      governmentIdFrontUrl: kyc.governmentIdFrontUrl ?? undefined,
+      governmentIdBackUrl: kyc.governmentIdBackUrl ?? undefined,
+
+      // Proof of address
+      proofOfAddressType: kyc.proofOfAddressType ?? undefined,
+      proofOfAddressUrl: kyc.proofOfAddressUrl ?? undefined,
+
       ninVerifiedAt: kyc.ninVerifiedAt ?? undefined,
       bvnVerifiedAt: kyc.bvnVerifiedAt ?? undefined,
       submittedAt: kyc.submittedAt ?? undefined,

@@ -1,11 +1,13 @@
 /* eslint-disable prettier/prettier */
 import { NestFactory, Reflector } from '@nestjs/core';
-import { ValidationPipe, Logger, ClassSerializerInterceptor, RawBody } from '@nestjs/common';
+import { ValidationPipe, Logger, ClassSerializerInterceptor } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { AppModule } from './app.module';
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
 import { NestExpressApplication } from '@nestjs/platform-express';
 import { Transport } from '@nestjs/microservices';
+import { join } from 'path';
+
 
 async function bootstrap() {
   const app = await NestFactory.create<NestExpressApplication>(AppModule);
@@ -54,6 +56,10 @@ async function bootstrap() {
   app.setGlobalPrefix('api', {
     exclude: ['health'],
   });
+
+  app.useStaticAssets(join(process.cwd(), 'uploads'), {
+    prefix: '/uploads'
+  })
 
   const options = new DocumentBuilder()
     .setTitle('Ajoti Backend API')

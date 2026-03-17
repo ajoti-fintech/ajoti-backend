@@ -1,14 +1,22 @@
 -- CreateEnum
-CREATE TYPE "NotificationType" AS ENUM ('EMAIL', 'IN_APP');
+DO $$ BEGIN
+  CREATE TYPE "NotificationType" AS ENUM ('EMAIL', 'IN_APP');
+EXCEPTION
+  WHEN duplicate_object THEN null;
+END $$;
 
 -- CreateEnum
-CREATE TYPE "NotificationStatus" AS ENUM ('PENDING', 'SENT', 'FAILED');
+DO $$ BEGIN
+  CREATE TYPE "NotificationStatus" AS ENUM ('PENDING', 'SENT', 'FAILED');
+EXCEPTION
+  WHEN duplicate_object THEN null;
+END $$;
 
 -- AlterEnum
-ALTER TYPE "OTPPurpose" ADD VALUE 'KYC_VERIFICATION';
+ALTER TYPE "OTPPurpose" ADD VALUE IF NOT EXISTS 'KYC_VERIFICATION';
 
 -- CreateTable
-CREATE TABLE "Notification" (
+CREATE TABLE IF NOT EXISTS "Notification" (
     "id" TEXT NOT NULL,
     "user_id" TEXT NOT NULL,
     "type" "NotificationType" NOT NULL,
@@ -26,10 +34,11 @@ CREATE TABLE "Notification" (
 );
 
 -- CreateIndex
-CREATE INDEX "Notification_user_id_isRead_idx" ON "Notification"("user_id", "isRead");
+CREATE INDEX IF NOT EXISTS "Notification_user_id_isRead_idx" ON "Notification"("user_id", "isRead");
 
 -- CreateIndex
-CREATE INDEX "Notification_user_id_createdAt_idx" ON "Notification"("user_id", "createdAt");
+CREATE INDEX IF NOT EXISTS "Notification_user_id_createdAt_idx" ON "Notification"("user_id", "createdAt");
 
 -- AddForeignKey
+ALTER TABLE "Notification" DROP CONSTRAINT IF EXISTS "Notification_user_id_fkey";
 ALTER TABLE "Notification" ADD CONSTRAINT "Notification_user_id_fkey" FOREIGN KEY ("user_id") REFERENCES "User"("id") ON DELETE CASCADE ON UPDATE CASCADE;

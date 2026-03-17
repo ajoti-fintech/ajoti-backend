@@ -534,7 +534,25 @@ enum KYCStep {
   NIN_REQUIRED
   BVN_REQUIRED
   NOK_REQUIRED
+  ADDRESS_REQUIRED
+  PHOTO_REQUIRED
+  PROOF_OF_ADDRESS_REQUIRED
   SUBMITTED
+}
+
+enum GovernmentIdType {
+  NIN_SLIP
+  PASSPORT
+  DRIVERS_LICENSE
+  PVC_CARD
+  OTHER
+}
+
+enum ProofOfAddressType {
+  UTILITY_BILL
+  BANK_STATEMENT
+  TENANCY_AGREEMENT
+  GOVERNMENT_ADDRESS_DOCUMENT
 }
 
 enum Gender {
@@ -606,6 +624,28 @@ model KYC {
   nextOfKinName         String? @db.VarChar(255)
   nextOfKinRelationship String? @db.VarChar(255)
   nextOfKinPhone        String? @db.VarChar(20)
+
+  // Address
+  address String? @db.VarChar(255)
+  city    String? @db.VarChar(100)
+  state   String? @db.VarChar(100)
+  lga     String? @db.VarChar(100)
+  country String? @db.VarChar(100)
+
+  // Photo
+  selfieUrl String? @db.Text
+  governmentIdType GovernmentIdType?
+  governmentIdFrontUrl  String? @db.Text
+  governmentIdBackUrl   String? @db.Text
+
+  selfieUploadedAt DateTime?
+  governmentIdUploadedAt DateTime?
+
+  // Proof of Address
+  proofOfAddressType    ProofOfAddressType?
+  proofOfAddressUrl     String? @db.Text
+  proofOfAddressUploadedAt DateTime?
+  proofOfAddressVerifiedAt DateTime?
 
   rejectionReason String?   @db.Text
   submittedAt     DateTime?
