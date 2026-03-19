@@ -1,0 +1,30 @@
+services:
+  ajoti-backend:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.dev
+    container_name: ajoti-backend-dev
+    restart: unless-stopped
+    env_file:
+      - ../.env
+    ports:
+      - "${PORT:-3000}:3000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+    volumes:
+      - ../:/app
+      - /app/node_modules
+    networks:
+      - app-network
+    command: >
+      sh -c "
+        npx prisma generate &&
+        npx prisma migrate deploy &&
+        pnpm exec ts-node prisma/seed.ts &&
+        pnpm run start:dev
+      "

@@ -19,6 +19,8 @@
     "noFallthroughCasesInSwitch": true,
     "paths": {
       "@/*": ["src/*"]
-    }
+    },
+    "moduleResolution": "node",
+    "types": ["node", "jest"]
   }
 }
