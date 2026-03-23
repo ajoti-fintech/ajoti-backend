@@ -23,6 +23,7 @@ import { resetPasswordOtpTemplate } from '../mail/templates/otp-reset-password';
 import { verificationOtpTemplate } from '../mail/templates/otp-verification';
 import { KafkaService } from '../kafka/kafka.service';
 import { OtpService } from '../otp/otp.service';
+import { StringValue } from 'ms';
 
 function sha256(input: string) {
   return crypto.createHash('sha256').update(input).digest('hex');
@@ -45,7 +46,7 @@ export class AuthService {
       { sub: userId, role },
       {
         secret: this.config.get<string>('JWT_ACCESS_SECRET'),
-        expiresIn: this.config.get<number>('JWT_ACCESS_EXPIRES_IN') || '15m',
+        expiresIn: (this.config.get<string>('JWT_ACCESS_EXPIRES_IN') || '15m') as StringValue,
       },
     );
 
@@ -57,6 +58,7 @@ export class AuthService {
     const days = Number(refreshDays.replace('d', '')) || 30;
     const refreshExpires = new Date(Date.now() + days * 24 * 60 * 60_000);
 
+    const decoded = this.jwt.decode(access) as {iat?: number; exp? : number} | null
     await this.prisma.refreshToken.create({
       data: {
         userId,
@@ -65,7 +67,7 @@ export class AuthService {
       },
     });
 
-    return { accessToken: access, refreshToken: refreshRaw };
+    return { accessToken: access, refreshToken: refreshRaw, iat:decoded?.iat, exp:decoded?.exp};
   }
 
   async register(registerDto: RegisterDto) {
@@ -173,7 +175,7 @@ export class AuthService {
       throw new ForbiddenException('Email not verified');
     }
 
-    const tokens = await this.issueTokens(user.id, user.role);
+    const tokens = await this.issueTokens(user.id, user.role,);
 
     await this.kafkaService.emit('auth.user.logged-in', {
       userId: user.id,
@@ -182,7 +184,7 @@ export class AuthService {
     });
 
     return {
-      user: { firstname: user.firstName, lastname: user.lastName, DOB: user.dob, },
+      user: { email: user.email, firstname: user.firstName, lastname: user.lastName, DOB: user.dob, phone: user.phone,},
       ...tokens,
     };
   }
