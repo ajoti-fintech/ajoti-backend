@@ -41,7 +41,7 @@ import { AuthRequest } from '@/common/types/auth-request';
 @ApiTags('Auth')
 @Controller('auth')
 export class AuthController {
-  constructor(private auth: AuthService) {}
+  constructor(private auth: AuthService) { }
 
   // 3 per 5 minutes
   @Post('register')

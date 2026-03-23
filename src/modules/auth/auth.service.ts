@@ -36,7 +36,7 @@ export class AuthService {
     private jwt: JwtService,
     private readonly kafkaService: KafkaService,
     private readonly otpService: OtpService,
-  ) {}
+  ) { }
 
   private logger = new Logger('HTTP');
 
@@ -182,8 +182,7 @@ export class AuthService {
     });
 
     return {
-      // message: 'Logged in',
-      // user: { id: user.id, email: user.email, role: user.role },
+      user: { firstname: user.firstName, lastname: user.lastName, DOB: user.dob, },
       ...tokens,
     };
   }

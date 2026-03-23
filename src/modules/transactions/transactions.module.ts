@@ -19,4 +19,4 @@ import { PrismaModule } from '@/prisma';
   providers: [TransactionsService],
   exports: [TransactionsService],
 })
-export class TransactionsModule {}
+export class TransactionsModule { }

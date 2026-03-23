@@ -5,7 +5,7 @@ import { ConfigService } from '@nestjs/config';
 import { AppModule } from './app.module';
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
 import { NestExpressApplication } from '@nestjs/platform-express';
-import { Transport } from '@nestjs/microservices';
+// import { Transport } from '@nestjs/microservices';
 import * as fs from 'fs';
 
 async function bootstrap() {

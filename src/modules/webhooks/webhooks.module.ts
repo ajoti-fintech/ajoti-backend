@@ -15,4 +15,4 @@ import { LedgerModule } from '../ledger/ledger.module'; // Was missing — requi
   controllers: [WebhooksController],
   providers: [WebhooksService],
 })
-export class WebhooksModule {}
+export class WebhooksModule { }

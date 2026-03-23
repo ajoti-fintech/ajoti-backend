@@ -7,4 +7,4 @@ import { FlutterwaveProvider } from './flutterwave.provider';
   providers: [FlutterwaveProvider],
   exports: [FlutterwaveProvider],
 })
-export class FlutterwaveModule {}
+export class FlutterwaveModule { }
