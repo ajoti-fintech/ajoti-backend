@@ -1,12 +1,14 @@
 # ---------deps-----------
 FROM node:24-alpine AS deps
 WORKDIR /app
+RUN corepack enable && corepack prepare pnpm@latest --activate
 COPY package*.json ./
 RUN pnpm ci
 
 # ---------builder-----------
 FROM node:24-alpine AS builder
 WORKDIR /app
+RUN corepack enable && corepack prepare pnpm@latest --activate
 
 COPY --from=deps /app/node_modules ./node_modules
 COPY package*.json ./
