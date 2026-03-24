@@ -1,0 +1,224 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# SETUP REQUIRED — GitHub Environments
+# ─────────────────────────────────────────────────────────────────────────────
+# In your repo → Settings → Environments, create two environments:
+#   • staging
+#   • production
+#
+# Add these secrets to EACH environment (same names, different values):
+#   EC2_HOST          — e.g. 1.2.3.4 or ec2-1-2-3-4.compute.amazonaws.com
+#   EC2_USER          — e.g. ubuntu
+#   EC2_SSH_KEY       — the full private key PEM
+#   DEPLOY_PATH       — e.g. /home/ubuntu/ajoti
+#   SUBDOMAIN         — e.g. ajoti  (used for the temp dir name)
+#   ENV_FILE_CONTENT  — the full contents of your .env file
+#   HEALTH_CHECK_URL  — e.g. http://localhost:8000/health or https://api.ajoti.com/health
+#
+# That's it. No *_PROD / *_STAGING suffix needed anywhere.
+# ─────────────────────────────────────────────────────────────────────────────
+
+name: Deploy to AWS EC2
+
+on:
+  push:
+    branches: [staging, main]
+  pull_request:
+    branches: [staging, main]
+    types: [closed]
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    name: Deploy (${{ github.ref == 'refs/heads/main' && 'production' || 'staging' }})
+    runs-on: ubuntu-latest
+
+    # Pulls secrets from the matching GitHub Environment
+    environment: ${{ github.ref == 'refs/heads/main' && 'production' || 'staging' }}
+
+    # Only run on direct pushes or merged PRs, not on unmerged PR events
+    if: github.event_name == 'push' || github.event_name == 'workflow_dispatch' || github.event.pull_request.merged == true
+
+    steps:
+      # ── 0. Resolve environment-specific values ───────────────────────────
+      - name: Set deployment variables
+        id: vars
+        run: |
+          if [ "${{ github.ref }}" = "refs/heads/main" ]; then
+            echo "env_label=PRODUCTION"                                                                     >> "$GITHUB_OUTPUT"
+            echo "compose_args=-f docker/docker-compose.yml -f docker/docker-compose.prod.yml"             >> "$GITHUB_OUTPUT"
+          else
+            echo "env_label=STAGING"                                                                        >> "$GITHUB_OUTPUT"
+            echo "compose_args=-f docker/docker-compose.yml -f docker/docker-compose.stage.yml"            >> "$GITHUB_OUTPUT"
+          fi
+
+      # ── 1. Checkout ───────────────────────────────────────────────────────
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # ── 2. Rsync code to a temp dir (old containers still running) ────────
+      - name: Upload code to EC2 temp directory
+        uses: burnett01/rsync-deployments@5.1
+        with:
+          switches: >-
+            -avzr --delete --chmod=ugo=rwX --ignore-errors
+            --exclude=.env
+            --exclude=.git/
+            --exclude=.github/
+            --exclude=**/__pycache__/
+            --exclude=**/*.pyc
+            --exclude=media/uploads/
+          path: ./
+          remote_path: /home/${{ secrets.EC2_USER }}/temp-deploy-${{ secrets.SUBDOMAIN }}
+          remote_host: ${{ secrets.EC2_HOST }}
+          remote_user: ${{ secrets.EC2_USER }}
+          remote_key: ${{ secrets.EC2_SSH_KEY }}
+
+      # ── 3. Write .env into the temp dir ──────────────────────────────────
+      - name: Write .env file on EC2
+        uses: appleboy/ssh-action@v1.0.0
+        with:
+          host: ${{ secrets.EC2_HOST }}
+          username: ${{ secrets.EC2_USER }}
+          key: ${{ secrets.EC2_SSH_KEY }}
+          port: 22
+          script: |
+            TEMP_DIR="/home/${{ secrets.EC2_USER }}/temp-deploy-${{ secrets.SUBDOMAIN }}"
+            # printf avoids echo interpreting escape sequences in the secret
+            printf '%s' '${{ secrets.ENV_FILE_CONTENT }}' > "${TEMP_DIR}/.env"
+            chmod 600 "${TEMP_DIR}/.env"
+            echo ".env written."
+
+      # ── 4. Zero-downtime swap + health check + auto-rollback ──────────────
+      - name: Deploy, health-check, auto-rollback on failure
+        uses: appleboy/ssh-action@v1.0.0
+        with:
+          host: ${{ secrets.EC2_HOST }}
+          username: ${{ secrets.EC2_USER }}
+          key: ${{ secrets.EC2_SSH_KEY }}
+          port: 22
+          command_timeout: 15m       # give the whole step 15 min max
+          script: |
+            set -euo pipefail
+
+            # ── Config ───────────────────────────────────────────────────────
+            ENV_LABEL="${{ steps.vars.outputs.env_label }}"
+            COMPOSE_ARGS="${{ steps.vars.outputs.compose_args }}"
+            TEMP_DIR="/home/${{ secrets.EC2_USER }}/temp-deploy-${{ secrets.SUBDOMAIN }}"
+            DEPLOY_PATH="${{ secrets.DEPLOY_PATH }}"
+            BACKUP_PATH="${DEPLOY_PATH}-rollback-backup"
+            HEALTH_URL="${{ secrets.HEALTH_CHECK_URL }}"
+            HEALTH_RETRIES=24          # attempts
+            HEALTH_INTERVAL=5          # seconds between attempts  →  max 2 min
+
+            echo ""
+            echo "════════════════════════════════════════════════════════"
+            echo "  Deploying to ${ENV_LABEL}"
+            echo "  Compose: ${COMPOSE_ARGS}"
+            echo "  Path:    ${DEPLOY_PATH}"
+            echo "════════════════════════════════════════════════════════"
+
+            # ── Helper: health check ──────────────────────────────────────
+            run_health_check() {
+              local retries=$1
+              local interval=$2
+              for i in $(seq 1 "${retries}"); do
+                HTTP_CODE=$(curl -sf --max-time 5 -o /dev/null -w "%{http_code}" "${HEALTH_URL}" 2>/dev/null || echo "000")
+                if [ "${HTTP_CODE}" = "200" ]; then
+                  echo "  ✓ Health check passed (HTTP ${HTTP_CODE}) on attempt ${i}/${retries}"
+                  return 0
+                fi
+                echo "  ✗ Attempt ${i}/${retries} — HTTP ${HTTP_CODE}, retrying in ${interval}s..."
+                sleep "${interval}"
+              done
+              return 1
+            }
+
+            # ── Step 1: Take ownership of deploy dir ──────────────────────
+            if [ -d "${DEPLOY_PATH}" ]; then
+              sudo chown -R ${{ secrets.EC2_USER }}:${{ secrets.EC2_USER }} "${DEPLOY_PATH}"
+            fi
+            mkdir -p "${DEPLOY_PATH}"
+
+            # ── Step 2: Back up current deployment for rollback ───────────
+            echo ""
+            echo "── Backing up current deployment for rollback..."
+            rm -rf "${BACKUP_PATH}"
+            if [ -d "${DEPLOY_PATH}" ] && [ "$(ls -A "${DEPLOY_PATH}")" ]; then
+              cp -a "${DEPLOY_PATH}" "${BACKUP_PATH}"
+              echo "   Backup saved to ${BACKUP_PATH}"
+            else
+              echo "   No existing deployment found — first deploy, skipping backup."
+            fi
+
+            # ── Step 3: Sync new code into deploy path ────────────────────
+            echo ""
+            echo "── Syncing new code..."
+            rsync -avzr --delete \
+              --exclude=".git/" \
+              --exclude="__pycache__/" \
+              --exclude="*.pyc" \
+              --exclude="media/uploads/" \
+              "${TEMP_DIR}/" \
+              "${DEPLOY_PATH}/"
+
+            cd "${DEPLOY_PATH}"
+
+            # ── Step 4: Build new images (old containers still running) ───
+            echo ""
+            echo "── Building new images (old containers still serving traffic)..."
+            docker compose ${COMPOSE_ARGS} build --pull
+
+            # ── Step 5: Swap containers ───────────────────────────────────
+            echo ""
+            echo "── Swapping to new containers..."
+            docker compose ${COMPOSE_ARGS} up -d --remove-orphans
+            # Note: the window between 'down' of the old container and 'up' of
+            # the new one is typically <5 s. True zero-downtime (0 ms) requires
+            # an upstream load-balancer (Nginx, Traefik, ALB) in front of the
+            # container — add that when you need it.
+
+            # ── Step 6: Health check ──────────────────────────────────────
+            echo ""
+            echo "── Running health checks (${HEALTH_RETRIES} × ${HEALTH_INTERVAL}s)..."
+            if run_health_check "${HEALTH_RETRIES}" "${HEALTH_INTERVAL}"; then
+              echo ""
+              echo "── Health check PASSED ✓"
+            else
+              # ── ROLLBACK ───────────────────────────────────────────────
+              echo ""
+              echo "════════════════════════════════════════════════════════"
+              echo "  ⚠  Health check FAILED — rolling back to previous build"
+              echo "════════════════════════════════════════════════════════"
+
+              if [ -d "${BACKUP_PATH}" ]; then
+                sudo chown -R ${{ secrets.EC2_USER }}:${{ secrets.EC2_USER }} "${DEPLOY_PATH}" || true
+                rm -rf "${DEPLOY_PATH}"
+                cp -a "${BACKUP_PATH}" "${DEPLOY_PATH}"
+                cd "${DEPLOY_PATH}"
+                echo "── Restarting previous containers..."
+                docker compose ${COMPOSE_ARGS} up -d --remove-orphans
+                echo "── Rollback complete. Verifying previous version..."
+                if run_health_check 6 5; then
+                  echo "   Previous version is healthy. Deployment FAILED — old version restored."
+                else
+                  echo "   WARNING: Rollback health check also failed. Manual intervention required!"
+                fi
+              else
+                echo "   No backup found (first deploy?) — cannot roll back automatically."
+              fi
+
+              # Fail the workflow so GitHub marks it red and notifies you
+              exit 1
+            fi
+
+            # ── Step 7: Cleanup ───────────────────────────────────────────
+            echo ""
+            echo "── Cleaning up..."
+            rm -rf "${TEMP_DIR}"
+            rm -rf "${BACKUP_PATH}"
+            docker image prune -f
+
+            echo ""
+            echo "════════════════════════════════════════════════════════"
+            echo "  ✓  Deployment to ${ENV_LABEL} SUCCESSFUL"
+            echo "════════════════════════════════════════════════════════"
