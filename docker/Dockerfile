@@ -1,19 +1,18 @@
 # ---------deps-----------
 FROM node:24-alpine AS deps
 WORKDIR /app
-RUN corepack enable && corepack prepare pnpm@latest --activate
+RUN npm install -g pnpm
 COPY package*.json ./
 RUN pnpm ci
 
 # ---------builder-----------
 FROM node:24-alpine AS builder
 WORKDIR /app
-RUN corepack enable && corepack prepare pnpm@latest --activate
+RUN npm install -g pnpm
 
 COPY --from=deps /app/node_modules ./node_modules
 COPY package*.json ./
 COPY prisma ./prisma
-
 RUN npx prisma generate
 
 COPY . .
