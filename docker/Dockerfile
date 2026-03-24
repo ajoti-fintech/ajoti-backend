@@ -3,7 +3,7 @@ FROM node:24-alpine AS deps
 WORKDIR /app
 RUN npm install -g pnpm
 COPY package*.json ./
-RUN pnpm ci
+RUN pnpm install --frozen-lockfile
 
 # ---------builder-----------
 FROM node:24-alpine AS builder
