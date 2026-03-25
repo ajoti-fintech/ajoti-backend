@@ -20,6 +20,7 @@ COPY prisma ./prisma
 RUN npx prisma generate
 
 COPY . .
+RUN rm -f prisma.config.ts
 RUN pnpm run build
 
 RUN pnpm prune --prod
