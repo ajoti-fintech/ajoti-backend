@@ -21,7 +21,7 @@ RUN npx prisma generate
 
 COPY . .
 RUN pnpm run build
-
+# 
 RUN pnpm prune --prod
 
 # ------runner----------
