@@ -20,7 +20,6 @@ COPY prisma ./prisma
 RUN npx prisma generate
 
 COPY . .
-RUN rm -f prisma.config.ts
 RUN pnpm run build
 
 RUN pnpm prune --prod
@@ -35,6 +34,7 @@ COPY --from=builder /app/pnpm-lock.yaml ./
 COPY --from=builder /app/node_modules ./node_modules
 COPY --from=builder /app/dist ./dist
 COPY --from=builder /app/prisma ./prisma
+COPY --from=builder /app/prisma.config.js ./
 
 EXPOSE 3000
 CMD ["node", "dist/main.js"]
