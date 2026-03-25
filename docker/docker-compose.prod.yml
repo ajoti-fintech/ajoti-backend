@@ -16,9 +16,6 @@ services:
         condition: service_healthy
       kafka:
         condition: service_healthy
-    volumes:
-      - ../:/app
-      - /app/node_modules
     networks:
       - app-network
     command: >
