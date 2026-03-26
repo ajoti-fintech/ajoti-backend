@@ -23,5 +23,6 @@ services:
     command: >
       sh -c "
         npx prisma migrate deploy &&
+        node dist/prisma/seed.js &&
         node dist/src/main.js
       "
