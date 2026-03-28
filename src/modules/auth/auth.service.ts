@@ -107,6 +107,79 @@ export class AuthService {
     return { message: 'Registered, OTP sent to mail', userId: user.id };
   }
 
+  async registerAdmin(registerDto: RegisterDto) {
+    const existing = await this.prisma.user.findUnique({
+      where: { email: registerDto.email },
+      select: { id: true, role: true },
+    });
+
+    const passwordHash = await hashValue(registerDto.password);
+    const dob = new Date(`${registerDto.dob}T00:00:00.000Z`);
+
+    let user: { id: string; email: string };
+
+    if (!existing) {
+      // Case 1: not on the system -> create as ADMIN
+      user = await this.prisma.user.create({
+        data: {
+          firstName: registerDto.firstName,
+          lastName: registerDto.lastName,
+          email: registerDto.email,
+          dob,
+          gender: registerDto.gender,
+          phone: registerDto.phone,
+          password: passwordHash,
+          role: Role.ADMIN,
+          profile: { create: {} },
+          kyc: { create: {} },
+        },
+        select: { id: true, email: true },
+      });
+    } else {
+      // Case 2: already on the system -> upgrade to ADMIN
+      if (existing.role === Role.ADMIN) {
+        throw new BadRequestException('User is already an admin');
+      }
+
+      // IMPORTANT:
+      // Decide if you want to overwrite profile fields + password or not.
+      // Below: we upgrade role + optionally update details.
+      user = await this.prisma.user.update({
+        where: { id: existing.id },
+        data: {
+          role: Role.ADMIN,
+          // optional updates (only if you want admin registration to refresh these)
+          firstName: registerDto.firstName,
+          lastName: registerDto.lastName,
+          dob,
+          gender: registerDto.gender,
+          phone: registerDto.phone,
+          password: passwordHash,
+          // create these only if they don't exist
+          profile: { connectOrCreate: { where: { userId: existing.id }, create: {} } },
+          kyc: { connectOrCreate: { where: { userId: existing.id }, create: {} } },
+        },
+        select: { id: true, email: true },
+      });
+    }
+
+    const fullName = `${registerDto.firstName} ${registerDto.lastName}`;
+
+    await this.otpService.sendOtp(registerDto.email, OTPPurpose.VERIFICATION, {
+      subject: 'Verify your email',
+      buildHtml: (args) => verificationOtpTemplate(args.otp, args.expiryMinutes, fullName),
+    });
+
+    await this.kafkaService.emit('auth.user.registered', {
+      userId: user.id,
+      email: user.email,
+      fullName,
+      timestamp: new Date().toISOString(),
+    });
+
+    return { message: 'Registered/Upgraded, OTP sent to mail', userId: user.id };
+  }
+
   async resendVerificationOtp(email: string) {
     const user = await this.prisma.user.findUnique({
       where: { email },

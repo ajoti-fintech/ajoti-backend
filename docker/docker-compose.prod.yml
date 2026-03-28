@@ -3,18 +3,24 @@ services:
     build:
       context: ..
       dockerfile: docker/Dockerfile
-      target: runner
     container_name: ajoti-backend-prod
     restart: unless-stopped
     env_file:
-      - ../.env.prod
+      - ../.env
     ports:
-      - "${AJOTI_BACKEND_PORT:-3000}:3000"
+      - "${PORT:-3000}:3000"
     depends_on:
-      - postgres:
+      postgres:
         condition: service_healthy
+      redis:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+    networks:
+      - app-network
     command: >
       sh -c "
         npx prisma migrate deploy &&
-        node dist/main.js
+        node dist/prisma/seed.js &&
+        node dist/src/main.js
       "

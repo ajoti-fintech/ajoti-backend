@@ -57,6 +57,19 @@ export class AuthController {
     return this.auth.register(dto);
   }
 
+  @Post('register-admin')
+  @Throttle({ default: { ttl: 300_000, limit: 3 } })
+  @ApiOperation({
+    summary: 'Register a new admin user',
+    description: 'Register a new admin user and send verification OTP',
+  })
+  @ApiAcceptedResponse({ type: RegistrationSuccessfulDto })
+  @ApiConflictResponse({ description: 'User already esists' })
+  @ApiBadRequestResponse({ description: 'Invalid imput' })
+  async registerAdmin(@Body() dto: RegisterDto) {
+    return this.auth.registerAdmin(dto);
+  }
+
   @Post('verify-email')
   @HttpCode(HttpStatus.OK)
   @Throttle({ default: { ttl: 600_000, limit: 10 } })
