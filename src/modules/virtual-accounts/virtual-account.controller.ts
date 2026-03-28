@@ -1,9 +1,22 @@
-import { Controller, Get, UseGuards, HttpCode, HttpStatus } from '@nestjs/common';
-import { ApiTags, ApiOperation, ApiResponse, ApiBearerAuth } from '@nestjs/swagger';
+import {
+    Controller,
+    Get,
+    Post,
+    Delete,
+    UseGuards,
+    HttpCode,
+    HttpStatus,
+} from '@nestjs/common';
+import {
+    ApiTags,
+    ApiOperation,
+    ApiResponse,
+    ApiBearerAuth,
+} from '@nestjs/swagger';
 import { VirtualAccountService } from "./virtual-account.service";
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { CurrentUser } from '@/common/decorators/current-user.decorator';
-import {  
+import {
     VirtualAccountResponseDto,
     formatVirtualAccountResponse,
 } from "./dto/virtual-account.dto";
@@ -44,4 +57,71 @@ export class VirtualAccountController {
             data: formatVirtualAccountResponse(va),
         };
     }
+
+    /**
+     * POST /api/wallet/virtual-account
+     *
+     * Explicit static VA provisioning endpoint (idempotent).
+     * If a VA already exists for the user, the existing one is returned.
+     */
+    @Post()
+    @HttpCode(HttpStatus.OK)
+    @ApiOperation({
+        summary: 'Create your static NGN virtual account (idempotent)',
+        description:
+            'Creates a permanent virtual account for wallet funding. ' +
+            'If you already have one, the existing account is returned.',
+    })
+    @ApiResponse({ status: 200, type: VirtualAccountResponseDto })
+    @ApiResponse({ status: 400, description: 'KYC incomplete (live mode only)' })
+    async createVirtualAccount(@CurrentUser('userId') userId: string) {
+        const va = await this.vaService.getOrCreate(userId);
+        return {
+            success: true,
+            message: 'Virtual account Created successfully',
+            data: formatVirtualAccountResponse(va),
+        };
+    }
+
+    @Delete()
+    @HttpCode(HttpStatus.OK)
+    @ApiOperation({
+        summary: 'Delete your virtual account',
+        description: 'Deletes your virtual account from Flutterwave and removes the local mapping.',
+    })
+    async deleteVirtualAccount(@CurrentUser('userId') userId: string) {
+        const result = await this.vaService.deleteForUser(userId);
+        return {
+            success: true,
+            message: 'Virtual account deleted successfully',
+            data: result,
+        };
+    }
 }
+
+/*
+// Commented out for now per product decision.
+// Keep this block for future admin VA management needs.
+@ApiTags('Wallet Admin')
+@Controller('admin/virtual-accounts')
+@UseGuards(JwtAuthGuard, RolesGuard)
+@Roles('ADMIN', 'SUPERADMIN')
+@ApiBearerAuth('access-token')
+export class VirtualAccountAdminController {
+    constructor(private readonly vaService: VirtualAccountService) { }
+
+    @Get(':orderRef')
+    @HttpCode(HttpStatus.OK)
+    @ApiOperation({
+        summary: '[Admin] Get virtual account details by order_ref',
+    })
+    async getVirtualAccountByOrderRef(@Param('orderRef') orderRef: string) {
+        const response = await this.vaService.getProviderVirtualAccountByOrderRef(orderRef);
+        return {
+            success: true,
+            message: 'Virtual account details retrieved successfully',
+            data: response,
+        };
+    }
+}
+*/

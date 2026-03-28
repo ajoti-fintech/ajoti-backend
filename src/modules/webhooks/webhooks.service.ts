@@ -5,7 +5,6 @@ import {
   UnauthorizedException,
 } from '@nestjs/common';
 import {
-  BucketType,
   EntryType,
   LedgerSourceType,
   MovementType,
@@ -13,28 +12,26 @@ import {
   TransactionType,
 } from '@prisma/client';
 import { PrismaService } from '@/prisma';
-import { LedgerService } from '../ledger/ledger.service';
 import { FlutterwaveProvider } from '../flutterwave/flutterwave.provider';
 import {
-  FlwChargeData,
-  FlwTransferData,
   FlwWebhookPayload,
+  FlwTransferData,
+  FlwChargeData,
+  FlwWebhookMetaData,
 } from './dto/flutterwave-webhook.dto';
 
 /**
- * FINANCIAL RULES (non-negotiable):
+ * CRITICAL FINANCIAL RULES (from DDD):
+ * 1. Check webhook_events.event_id UNIQUE before processing — idempotency
+ * 2. All ledger writes are APPEND-ONLY — no updates, no deletes
+ * 3. All multi-step operations use prisma.$transaction()
+ * 4. On failure after debit: create REVERSAL compensating CREDIT entry
+ * 5. Amount conversion: FLW sends Naira → we store Kobo (multiply by 100)
  *
- * R0  Ledger is append-only — no updates, no deletes
- * R1  Wallet credited ONLY via confirmed webhook (charge.completed, successful)
- * R2  Idempotency check (webhook_events.event_id UNIQUE) BEFORE any processing
- * R3  Always verify with FLW API before crediting — never trust webhook payload alone
- * R4  All multi-step DB operations inside prisma.$transaction()
- * R5  Failed transfers → compensating CREDIT reversal entry, never touch original DEBIT
- * R6  Amount conversion: FLW sends Naira → store kobo (multiply × 100)
- *
- * Virtual account payments (VA):
- * R7  VA payments reuse tx_ref (AJOTI-VA-{userId}) — idempotency key is flw_ref (unique per payment)
- * R8  VA credits create a Transaction record inline (no pre-existing PENDING record)
+ * VA CREDIT IDEMPOTENCY (important):
+ * - Virtual accounts have a STATIC tx_ref (AJOTI-VA-{userId}) reused on every payment
+ * - We use flw_ref (unique per FLW transaction) as the ledger reference for VA credits
+ * - This is enforced by the LedgerEntry unique constraint: (walletId, reference, sourceType, sourceId)
  */
 @Injectable()
 export class WebhooksService {
@@ -43,311 +40,285 @@ export class WebhooksService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly flw: FlutterwaveProvider,
-    private readonly ledger: LedgerService,
   ) {}
 
-  // ─── Entry Point ──────────────────────────────────────────────────────────
-
+  /**
+   * Entry point for all Flutterwave webhooks.
+   * Routes to the appropriate handler based on event type.
+   */
   async handleWebhook(
     payload: FlwWebhookPayload,
     signatureHeader: string,
   ): Promise<{ received: boolean }> {
-    // R1: Verify signature first — reject anything unsigned
+    // 1. Verify webhook signature
     if (!this.flw.verifyWebhookSignature(signatureHeader)) {
-      this.logger.warn('Rejected webhook — invalid signature');
+      this.logger.warn('Invalid webhook signature received');
       throw new UnauthorizedException('Invalid webhook signature');
     }
 
-    // R2: Idempotency — deduplicate FLW retries before any side effects
     const eventId = this.extractEventId(payload);
+
+    // 2. Idempotency check — deduplicate retried webhooks
     const alreadyProcessed = await this.checkIdempotency(eventId, payload);
     if (alreadyProcessed) {
       this.logger.log(`Duplicate webhook ignored: ${eventId}`);
-      return { received: true }; // 200 OK — do nothing
+      return { received: true };
     }
 
-    // Route to handler
+    // 3. Route to handler
     try {
       if (payload.event === 'charge.completed') {
-        const data = payload.data as FlwChargeData;
-        if (this.isVirtualAccountPayment(data)) {
-          await this.handleVirtualAccountCredit(data);
-        } else {
-          await this.handleChargeCompleted(data);
-        }
+        await this.handleChargeCompleted(payload);
       } else if (payload.event === 'transfer.completed') {
         await this.handleTransferCompleted(payload.data as FlwTransferData);
       } else {
         this.logger.log(`Unhandled webhook event: ${payload.event} — ignoring`);
       }
     } catch (error) {
-      // Always return 200 to prevent FLW retrying indefinitely.
-      // The idempotency key is already committed, so re-delivery would be ignored anyway.
-      // Log for manual reprocessing.
-      this.logger.error(`Webhook handler error for ${eventId}`, error);
+      this.logger.error(`Webhook processing failed for event ${eventId}`, error);
+      // Release idempotency marker so retries can be processed.
+      // This prevents permanent fund-loss scenarios if processing fails transiently.
+      await this.releaseIdempotencyMarker(eventId);
+      throw error;
     }
 
     return { received: true };
   }
 
-  // ─── Routing Helpers ──────────────────────────────────────────────────────
+  // ─────────────────────────────────────────────────────────────────────────
+  // charge.completed — two paths:
+  //   A) Virtual Account credit  (tx_ref = AJOTI-VA-{userId}, static per user)
+  //   B) Hosted checkout funding (tx_ref = AJT-FUND-{uuid}, unique per session)
+  // ─────────────────────────────────────────────────────────────────────────
 
-  /**
-   * Determine if a charge.completed event is a virtual account payment.
-   * VA payments: payment_type='bank_transfer' AND tx_ref starts with 'AJOTI-VA-'
-   */
-  private isVirtualAccountPayment(data: FlwChargeData): boolean {
-    return (
-      (data as any).payment_type === 'bank_transfer' &&
-      typeof data.tx_ref === 'string' &&
-      data.tx_ref.startsWith('AJOTI-VA-')
-    );
-  }
+  private async handleChargeCompleted(payload: FlwWebhookPayload): Promise<void> {
+    const data = payload.data as FlwChargeData;
 
-  /**
-   * Build the idempotency event ID.
-   *
-   * For standard payments: "charge.completed::{tx_ref}" (tx_ref is unique per checkout session)
-   * For VA payments:       "charge.completed::{flw_ref}" (tx_ref is REUSED — flw_ref is unique)
-   * For transfers:         "transfer.completed::{reference}"
-   */
-  private extractEventId(payload: FlwWebhookPayload): string {
-    const data = payload.data as any;
-
-    // R7: VA payments — must use flw_ref for idempotency, not tx_ref
-    if (
-      data.payment_type === 'bank_transfer' &&
-      data.tx_ref?.startsWith('AJOTI-VA-')
-    ) {
-      return `${payload.event}::${data.flw_ref}`;
-    }
-
-    const ref = data.tx_ref ?? data.reference ?? String(data.id);
-    return `${payload.event}::${ref}`;
-  }
-
-  // ─── charge.completed → Hosted Checkout Funding ───────────────────────────
-
-  /**
-   * Handle a successful hosted checkout payment (card, USSD, bank transfer).
-   *
-   * Flow:
-   *  1. Skip if not successful
-   *  2. R3: Verify with FLW API
-   *  3. Find the PENDING transaction by tx_ref
-   *  4. R6: Convert Naira → kobo
-   *  5. Write CREDIT ledger entry via LedgerService (handles FOR UPDATE internally)
-   *  6. Mark transaction SUCCESS
-   */
-  private async handleChargeCompleted(data: FlwChargeData): Promise<void> {
     this.logger.log(
-      `charge.completed: tx_ref=${data.tx_ref}, status=${data.status}`,
+      `Processing charge.completed: tx_ref=${data.tx_ref}, status=${data.status}, payment_type=${data.payment_type}`,
     );
 
     if (data.status !== 'successful') {
-      this.logger.log(`Charge not successful (${data.status}) — marking FAILED`);
+      this.logger.log(`Charge not successful (${data.status}) — skipping credit`);
+      // Only mark failed if a Transaction record exists (hosted checkout path)
       await this.updateTransactionStatus(data.tx_ref, TransactionStatus.FAILED);
       return;
     }
 
-    // R3: Verify before crediting
-    const verifyResult = await this.flw.verifyTransaction(data.id);
-    const verified =
-      verifyResult.data?.status === 'successful' &&
-      verifyResult.data.tx_ref === data.tx_ref &&
-      verifyResult.data.currency === 'NGN';
+    // ── PATH A: Virtual Account ───────────────────────────────────────────
+    // VA tx_ref is stable (AJOTI-VA-{userId}), so we look it up in virtual_accounts.
+    // We must handle this BEFORE the Transaction lookup because there is no
+    // Transaction row for VA payments — the VA is provisioned once, not per payment.
+    const normalizedPaymentType = data.payment_type?.toLowerCase().trim();
+    const isBankTransferCharge =
+      normalizedPaymentType === 'bank_transfer' ||
+      normalizedPaymentType === 'banktransfer' ||
+      payload['event.type'] === 'BANK_TRANSFER_TRANSACTION';
 
-    if (!verified) {
-      this.logger.warn(
-        `Verification mismatch for tx_ref=${data.tx_ref} — marking FAILED`,
-      );
-      await this.updateTransactionStatus(data.tx_ref, TransactionStatus.FAILED);
-      return;
+    if (isBankTransferCharge) {
+      const va = await this.prisma.virtualAccount.findUnique({
+        where: { txRef: data.tx_ref },
+        include: { wallet: true },
+      });
+
+      if (va) {
+        const verification = await this.verifyChargeWithProvider(data);
+        if (!verification.valid) {
+          this.logger.warn(
+            `VA verification mismatch for tx_ref=${data.tx_ref}: ${verification.reason}`,
+          );
+          return;
+        }
+
+        await this.creditWalletFromVA(
+          va,
+          data,
+          verification.amountKobo,
+          payload.meta_data,
+        );
+        return;
+      }
+      // No VA found for this tx_ref — fall through to hosted checkout path.
+      // This handles bank_transfer payments made via the standard hosted checkout.
     }
 
+    // ── PATH B: Hosted Checkout (card / ussd / one-time bank_transfer) ────
     const transaction = await this.prisma.transaction.findUnique({
       where: { reference: data.tx_ref },
       include: { wallet: true },
     });
 
     if (!transaction) {
-      this.logger.error(`No transaction record for tx_ref=${data.tx_ref}`);
+      this.logger.error(`Transaction not found for tx_ref: ${data.tx_ref}`);
       return;
     }
 
     if (transaction.status !== TransactionStatus.PENDING) {
       this.logger.warn(
-        `Transaction ${data.tx_ref} already ${transaction.status} — skipping`,
+        `Transaction ${data.tx_ref} already in status ${transaction.status} — skipping`,
       );
       return;
     }
 
-    // R6: FLW sends Naira — convert to kobo
-    const amountKobo = BigInt(Math.round(data.amount * 100));
+    // Verify with FLW before crediting (status, tx_ref, currency, amount).
+    const verification = await this.verifyChargeWithProvider(data, transaction.amount);
+    if (!verification.valid) {
+      this.logger.warn(
+        `Transaction verification mismatch for ${data.tx_ref}: ${verification.reason}`,
+      );
+      await this.updateTransactionStatus(data.tx_ref, TransactionStatus.FAILED);
+      return;
+    }
+
+    const amountKobo = verification.amountKobo;
+    const settledPaymentType = verification.paymentType ?? data.payment_type;
+    const fundingMethodLabel = this.resolveFundingMethodLabel(settledPaymentType);
+    const fundingTransactionType = this.resolveFundingTransactionType(settledPaymentType);
+    const fundingReference = `${fundingMethodLabel}-${transaction.id}`;
 
     await this.prisma.$transaction(async (tx) => {
-      // R0: Append-only credit via LedgerService (handles SELECT FOR UPDATE internally)
-      await this.ledger.writeEntry(
-        {
+      await tx.$executeRaw`SELECT id FROM wallets WHERE id = ${transaction.walletId} FOR UPDATE`;
+
+      // Use running total from balanceAfter — O(1) vs O(n) full scan
+      const balanceBefore = await this.getLatestBalance(tx, transaction.walletId);
+      const balanceAfter = balanceBefore + amountKobo;
+
+      await tx.ledgerEntry.create({
+        data: {
           walletId: transaction.walletId,
+          reference: fundingReference,
           entryType: EntryType.CREDIT,
           movementType: MovementType.FUNDING,
-          bucketType: BucketType.MAIN,
           amount: amountKobo,
-          reference: `FUNDING-${transaction.id}`,
+          balanceBefore,
+          balanceAfter,
           sourceType: LedgerSourceType.TRANSACTION,
           sourceId: transaction.id,
           metadata: {
             flwTransactionId: data.id,
-            flwRef: data.flw_ref,
+            flwRef: verification.flwRef,
             provider: 'FLUTTERWAVE',
-            paymentType: (data as any).payment_type ?? 'unknown',
+            paymentType: settledPaymentType ?? 'unknown',
+            verifiedAmountKobo: amountKobo.toString(),
+            fundingMethodLabel,
           },
         },
-        tx,
-      );
+      });
 
       await tx.transaction.update({
         where: { id: transaction.id },
         data: {
+          type: fundingTransactionType,
           status: TransactionStatus.SUCCESS,
           completedAt: new Date(),
           metadata: {
-            ...((transaction.metadata as object) ?? {}),
+            ...(transaction.metadata as object),
             flwTransactionId: data.id,
-            flwRef: data.flw_ref,
-            chargedAmount: data.charged_amount,
+            flwRef: verification.flwRef,
+            verifiedPaymentType: settledPaymentType ?? null,
+            chargedAmount: verification.chargedAmount,
+            verifiedAmountKobo: amountKobo.toString(),
+            fundingMethodLabel,
+            fundingLedgerReference: fundingReference,
           },
         },
       });
     });
 
     this.logger.log(
-      `Wallet funded: walletId=${transaction.walletId}, amount=${amountKobo} kobo`,
+      `Hosted checkout funded: walletId=${transaction.walletId}, amount=${amountKobo} kobo`,
     );
   }
 
-  // ─── charge.completed → Virtual Account Credit ────────────────────────────
-
   /**
-   * Handle an incoming payment to a user's dedicated virtual account.
+   * Credit a wallet from a Virtual Account payment.
    *
-   * Differences from standard hosted checkout:
-   *  - No pre-existing PENDING transaction — we create one inline (R8)
-   *  - Idempotency is keyed on flw_ref (unique per payment), not tx_ref (static per VA)
-   *  - userId is extracted from the stable tx_ref (AJOTI-VA-{userId})
-   *
-   * Flow:
-   *  1. Skip if not successful
-   *  2. R3: Verify with FLW API
-   *  3. Look up virtual account + wallet by tx_ref
-   *  4. Create Transaction record (PENDING → SUCCESS inline)
-   *  5. Write CREDIT ledger entry
+   * KEY DIFFERENCE FROM HOSTED CHECKOUT:
+   * - tx_ref is STATIC (reused for every payment to the same VA)
+   * - flw_ref is UNIQUE per payment — used as the ledger reference for idempotency
+   * - The LedgerEntry unique constraint (walletId, reference, sourceType, sourceId)
+   *   prevents double-credits if FLW retries the webhook
+   * - No Transaction record exists — VA credits go straight to the ledger
    */
-  private async handleVirtualAccountCredit(data: FlwChargeData): Promise<void> {
-    const flwRef = (data as any).flw_ref as string;
+  private async creditWalletFromVA(
+    va: any,
+    data: FlwChargeData,
+    amountKobo: bigint,
+    webhookMetaData?: FlwWebhookMetaData,
+  ): Promise<void> {
     this.logger.log(
-      `VA credit: tx_ref=${data.tx_ref}, flw_ref=${flwRef}, amount=${data.amount} NGN`,
+      `VA credit: userId=${va.userId}, flw_ref=${data.flw_ref}, amount=${amountKobo.toString()} kobo`,
     );
 
-    if (data.status !== 'successful') {
-      this.logger.log(`VA payment not successful (${data.status}) — skipping`);
-      return;
-    }
-
-    // R3: Verify before crediting
-    const verifyResult = await this.flw.verifyTransaction(data.id);
-    if (verifyResult.data?.status !== 'successful') {
-      this.logger.warn(
-        `VA verification failed: flw_ref=${flwRef}, reported status=${verifyResult.data?.status}`,
-      );
-      return;
-    }
-
-    // Look up VA and wallet
-    const virtualAccount = await this.prisma.virtualAccount.findUnique({
-      where: { txRef: data.tx_ref },
-      include: { wallet: true },
-    });
-
-    if (!virtualAccount) {
-      this.logger.error(`No virtual account for tx_ref=${data.tx_ref}`);
-      return;
-    }
-
-    if (!virtualAccount.isActive) {
-      this.logger.warn(`Virtual account inactive: tx_ref=${data.tx_ref}`);
-      return;
-    }
-
-    // R6: Naira → kobo
-    const amountKobo = BigInt(Math.round(data.amount * 100));
-    const transactionRef = `VA-CREDIT-${flwRef}`;
+    // flw_ref is unique per FLW transaction — safe idempotency key for VA payments
+    const ledgerReference = `VA-${data.flw_ref}`;
 
     await this.prisma.$transaction(async (tx) => {
-      // R8: Create Transaction record inline — no pre-existing PENDING record for VA payments
-      const transaction = await tx.transaction.create({
-        data: {
-          walletId: virtualAccount.walletId,
-          provider: 'FLUTTERWAVE',
-          reference: transactionRef,
-          amount: amountKobo,
-          currency: 'NGN',
-          status: TransactionStatus.SUCCESS,
-          type: TransactionType.FUNDING,
-          completedAt: new Date(),
-          metadata: {
-            flwTransactionId: data.id,
-            flwRef,
-            paymentType: 'virtual_account',
-            virtualAccountNumber: virtualAccount.accountNumber,
-            bankName: virtualAccount.bankName,
-          },
+      await tx.$executeRaw`SELECT id FROM wallets WHERE id = ${va.walletId} FOR UPDATE`;
+
+      // Check for duplicate using the LedgerEntry reference.
+      // This is a belt-and-suspenders guard on top of the idempotency key in webhook_events.
+      const existing = await tx.ledgerEntry.findFirst({
+        where: {
+          walletId: va.walletId,
+          reference: ledgerReference,
         },
       });
 
-      // R0: Append-only credit
-      await this.ledger.writeEntry(
-        {
-          walletId: virtualAccount.walletId,
+      if (existing) {
+        this.logger.warn(
+          `Duplicate VA ledger entry detected for flw_ref=${data.flw_ref} — skipping`,
+        );
+        return;
+      }
+
+      // Use running total — O(1)
+      const balanceBefore = await this.getLatestBalance(tx, va.walletId);
+      const balanceAfter = balanceBefore + amountKobo;
+
+      await tx.ledgerEntry.create({
+        data: {
+          walletId: va.walletId,
+          // flw_ref as reference = unique per payment, prevents double-credit
+          reference: ledgerReference,
           entryType: EntryType.CREDIT,
           movementType: MovementType.FUNDING,
-          bucketType: BucketType.MAIN,
           amount: amountKobo,
-          reference: `VA-FUNDING-${transaction.id}`,
+          balanceBefore,
+          balanceAfter,
+          // sourceId = virtualAccount.id (stable per user — not per payment)
           sourceType: LedgerSourceType.TRANSACTION,
-          sourceId: transaction.id,
+          sourceId: va.id,
           metadata: {
             flwTransactionId: data.id,
-            flwRef,
-            paymentType: 'virtual_account',
+            flwRef: data.flw_ref,
+            txRef: data.tx_ref,
             provider: 'FLUTTERWAVE',
-            virtualAccountNumber: virtualAccount.accountNumber,
+            source: 'VIRTUAL_ACCOUNT',
+            senderName: (data as any).sender ?? null,
+            originatorAccountNumber:
+              webhookMetaData?.originatoraccountnumber ?? null,
+            originatorName: webhookMetaData?.originatorname ?? null,
+            originatorBankName: webhookMetaData?.bankname ?? null,
+            originatorAmount: webhookMetaData?.originatoramount ?? null,
+            providerMetaData: (webhookMetaData as any) ?? null,
           },
         },
-        tx,
-      );
+      });
     });
 
     this.logger.log(
-      `VA wallet funded: walletId=${virtualAccount.walletId}, ` +
-        `amount=${amountKobo} kobo, flwRef=${flwRef}`,
+      `VA wallet funded: walletId=${va.walletId}, amount=${amountKobo} kobo, flw_ref=${data.flw_ref}`,
     );
   }
 
-  // ─── transfer.completed → Withdrawal Confirmation ─────────────────────────
+  // ─────────────────────────────────────────────────────────────────────────
+  // transfer.completed → WITHDRAWAL confirmation or REVERSAL
+  // ─────────────────────────────────────────────────────────────────────────
 
-  /**
-   * Handle a transfer.completed event (withdrawal outcome).
-   *
-   * SUCCESS: Mark transaction as SUCCESS (ledger DEBIT already written at initiation)
-   * FAILED:  R5 — create compensating CREDIT reversal entry, mark transaction FAILED
-   *
-   * Original DEBIT entry is never touched (R0 — append-only).
-   */
   private async handleTransferCompleted(data: FlwTransferData): Promise<void> {
     this.logger.log(
-      `transfer.completed: reference=${data.reference}, status=${data.status}`,
+      `Processing transfer.completed: reference=${data.reference}, status=${data.status}`,
     );
 
     const transaction = await this.prisma.transaction.findUnique({
@@ -356,15 +327,13 @@ export class WebhooksService {
     });
 
     if (!transaction) {
-      this.logger.error(
-        `No transaction record for transfer ref=${data.reference}`,
-      );
+      this.logger.error(`Transaction not found for transfer ref: ${data.reference}`);
       return;
     }
 
     if (transaction.status !== TransactionStatus.PENDING) {
       this.logger.warn(
-        `Transfer ${data.reference} already ${transaction.status} — skipping`,
+        `Transfer ${data.reference} already in status ${transaction.status} — skipping`,
       );
       return;
     }
@@ -373,51 +342,61 @@ export class WebhooksService {
 
     await this.prisma.$transaction(async (tx) => {
       if (isSuccessful) {
+        // Transfer confirmed — just mark the transaction done.
+        // The ledger DEBIT was already written at initiation time (WithdrawalService).
         await tx.transaction.update({
           where: { id: transaction.id },
           data: {
             status: TransactionStatus.SUCCESS,
             completedAt: new Date(),
             metadata: {
-              ...((transaction.metadata as object) ?? {}),
+              ...(transaction.metadata as object),
               flwTransferId: data.id,
               completeMessage: data.complete_message,
             },
           },
         });
+
         this.logger.log(
           `Withdrawal confirmed: walletId=${transaction.walletId}, ref=${data.reference}`,
         );
       } else {
-        // R5: Transfer failed — compensating credit (funds return to user's available balance)
+        // Transfer FAILED — compensating CREDIT reversal.
+        // The original DEBIT in the ledger stays (append-only). We add a matching CREDIT.
+        await tx.$executeRaw`SELECT id FROM wallets WHERE id = ${transaction.walletId} FOR UPDATE`;
+
+        const reversalAmount = transaction.amount; // already in kobo
         const reversalRef = `REVERSAL-${transaction.reference}`;
 
-        await this.ledger.writeEntry(
-          {
+        const balanceBefore = await this.getLatestBalance(tx, transaction.walletId);
+        const balanceAfter = balanceBefore + reversalAmount;
+
+        await tx.ledgerEntry.create({
+          data: {
             walletId: transaction.walletId,
+            reference: reversalRef,
             entryType: EntryType.CREDIT,
             movementType: MovementType.WITHDRAWAL,
-            bucketType: BucketType.MAIN,
-            amount: transaction.amount, // Already in kobo
-            reference: reversalRef,
+            amount: reversalAmount,
+            balanceBefore,
+            balanceAfter,
             sourceType: LedgerSourceType.REVERSAL,
             sourceId: transaction.id,
             metadata: {
-              reason: 'Transfer failed at Flutterwave',
+              reason: 'Transfer failed at provider',
               flwTransferId: data.id,
               completeMessage: data.complete_message,
               originalRef: transaction.reference,
             },
           },
-          tx,
-        );
+        });
 
         await tx.transaction.update({
           where: { id: transaction.id },
           data: {
             status: TransactionStatus.FAILED,
             metadata: {
-              ...((transaction.metadata as object) ?? {}),
+              ...(transaction.metadata as object),
               flwTransferId: data.id,
               failureReason: data.complete_message,
               reversalRef,
@@ -426,18 +405,163 @@ export class WebhooksService {
         });
 
         this.logger.warn(
-          `Withdrawal FAILED — reversal credited: walletId=${transaction.walletId}, ref=${reversalRef}`,
+          `Withdrawal failed — reversal credited: walletId=${transaction.walletId}, ref=${reversalRef}`,
         );
       }
     });
   }
 
-  // ─── Helpers ──────────────────────────────────────────────────────────────
+  // ─────────────────────────────────────────────────────────────────────────
+  // Helpers
+  // ─────────────────────────────────────────────────────────────────────────
 
   /**
-   * Record a webhook event for idempotency.
-   * Returns true if already processed (duplicate — caller should skip).
-   * Uses the UNIQUE constraint on webhook_events.event_id as the gate.
+   * Get the current total wallet balance from the running total (balanceAfter).
+   *
+   * O(1) — reads only the most recent ledger entry.
+   * This is the correct approach vs. summing all entries which is O(n).
+   *
+   * The caller must hold a SELECT FOR UPDATE lock on the wallet row
+   * before calling this to prevent race conditions.
+   */
+  private async getLatestBalance(tx: any, walletId: string): Promise<bigint> {
+    const last = await tx.ledgerEntry.findFirst({
+      where: { walletId },
+      orderBy: { createdAt: 'desc' },
+      select: { balanceAfter: true },
+    });
+    return last?.balanceAfter ?? 0n;
+  }
+
+  private resolveFundingMethodLabel(providerPaymentType?: string): string {
+    const paymentType = providerPaymentType?.toLowerCase().trim();
+
+    if (paymentType === 'card') {
+      return 'Funding-Card';
+    }
+
+    if (paymentType === 'bank_transfer' || paymentType === 'banktransfer') {
+      return 'Funding-BankTransfer';
+    }
+
+    if (paymentType === 'ussd') {
+      return 'Funding-USSD';
+    }
+
+    if (paymentType === 'account') {
+      return 'Funding-Account';
+    }
+
+    return 'Funding-Unknown';
+  }
+
+  private resolveFundingTransactionType(providerPaymentType?: string): TransactionType {
+    const paymentType = providerPaymentType?.toLowerCase().trim();
+
+    if (paymentType === 'card') {
+      return TransactionType.FUNDING_CARD;
+    }
+
+    if (paymentType === 'bank_transfer' || paymentType === 'banktransfer') {
+      return TransactionType.FUNDING_BANKTRANSFER;
+    }
+
+    if (paymentType === 'ussd') {
+      return TransactionType.FUNDING_USSD;
+    }
+
+    if (paymentType === 'account') {
+      return TransactionType.FUNDING_ACCOUNT;
+    }
+
+    return TransactionType.FUNDING;
+  }
+
+  /**
+   * Provider-side charge verification guard.
+   * Flutterwave docs recommend verifying tx status + tx_ref + currency + amount
+   * before giving value.
+   */
+  private async verifyChargeWithProvider(
+    data: FlwChargeData,
+    expectedAmountKobo?: bigint,
+  ): Promise<{
+    valid: boolean;
+    amountKobo: bigint;
+    flwRef: string;
+    paymentType?: string;
+    chargedAmount: number;
+    reason?: string;
+  }> {
+    const verifyResult = await this.flw.verifyTransaction(data.id);
+    const verified = verifyResult.data;
+
+    if (verified.status !== 'successful') {
+      return {
+        valid: false,
+        amountKobo: 0n,
+        flwRef: verified.flw_ref ?? data.flw_ref,
+        paymentType: verified.payment_type,
+        chargedAmount: verified.charged_amount,
+        reason: 'provider_status_not_successful',
+      };
+    }
+
+    if (verified.tx_ref !== data.tx_ref) {
+      return {
+        valid: false,
+        amountKobo: 0n,
+        flwRef: verified.flw_ref ?? data.flw_ref,
+        paymentType: verified.payment_type,
+        chargedAmount: verified.charged_amount,
+        reason: 'tx_ref_mismatch',
+      };
+    }
+
+    if (verified.currency !== 'NGN') {
+      return {
+        valid: false,
+        amountKobo: 0n,
+        flwRef: verified.flw_ref ?? data.flw_ref,
+        paymentType: verified.payment_type,
+        chargedAmount: verified.charged_amount,
+        reason: 'currency_mismatch',
+      };
+    }
+
+    const verifiedAmountKobo = BigInt(Math.round(verified.amount * 100));
+    if (expectedAmountKobo !== undefined && verifiedAmountKobo !== expectedAmountKobo) {
+      return {
+        valid: false,
+        amountKobo: verifiedAmountKobo,
+        flwRef: verified.flw_ref ?? data.flw_ref,
+        paymentType: verified.payment_type,
+        chargedAmount: verified.charged_amount,
+        reason: `amount_mismatch_expected_${expectedAmountKobo.toString()}_got_${verifiedAmountKobo.toString()}`,
+      };
+    }
+
+    // We trust the verified endpoint values over webhook payload values.
+    const webhookAmountKobo = BigInt(Math.round(data.amount * 100));
+    if (webhookAmountKobo !== verifiedAmountKobo) {
+      this.logger.warn(
+        `Webhook amount differs from verified amount for tx_ref=${data.tx_ref}: webhook=${webhookAmountKobo.toString()}, verified=${verifiedAmountKobo.toString()}`,
+      );
+    }
+
+    return {
+      valid: true,
+      amountKobo: verifiedAmountKobo,
+      flwRef: verified.flw_ref ?? data.flw_ref,
+      paymentType: verified.payment_type,
+      chargedAmount: verified.charged_amount,
+    };
+  }
+
+  /**
+   * Record the webhook event BEFORE processing.
+   * Uses UNIQUE constraint on event_id to prevent duplicates.
+   * Returns true if already processed (duplicate).
    */
   private async checkIdempotency(
     eventId: string,
@@ -451,13 +575,59 @@ export class WebhooksService {
           payload: payload as object,
         },
       });
-      return false; // New — proceed with processing
+      return false;
     } catch (error: any) {
-      if (error?.code === 'P2002') return true; // Duplicate — skip
+      if (error?.code === 'P2002') {
+        return true; // Duplicate
+      }
       throw error;
     }
   }
 
+  /**
+   * Remove idempotency marker when processing fails so provider retries can succeed.
+   */
+  private async releaseIdempotencyMarker(eventId: string): Promise<void> {
+    try {
+      await this.prisma.webhookEvent.delete({
+        where: { eventId },
+      });
+    } catch (error: any) {
+      // Ignore "record not found" and bubble everything else.
+      if (error?.code !== 'P2025') {
+        throw error;
+      }
+    }
+  }
+
+  /**
+   * Extract a unique event ID from the payload.
+   *
+   * charge.completed:  event::tx_ref::flw_ref  (flw_ref makes it unique per payment)
+   * transfer.completed: event::reference
+   *
+   * Including flw_ref for charge events is important because tx_ref is STATIC
+   * for virtual accounts (reused on every payment to the same account).
+   */
+  private extractEventId(payload: FlwWebhookPayload): string {
+    const data = payload.data as any;
+
+    if (payload.event === 'charge.completed') {
+      // flw_ref is unique per FLW transaction — guarantees uniqueness for VA payments
+      const flwRef = data.flw_ref ?? data.id;
+      return `${payload.event}::${data.tx_ref}::${flwRef}`;
+    }
+
+    // transfer.completed — reference is our unique internal ref
+    const ref = data.reference ?? data.id;
+    return `${payload.event}::${ref}`;
+  }
+
+  /**
+   * Update transaction status for cases where we don't need a ledger entry
+   * (e.g. charge failed before we debited anything).
+   * Uses updateMany so it silently does nothing if no matching PENDING record exists.
+   */
   private async updateTransactionStatus(
     txRef: string,
     status: TransactionStatus,

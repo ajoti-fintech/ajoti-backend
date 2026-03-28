@@ -99,7 +99,7 @@ export class AuthService {
     const fullName = `${registerDto.firstName} ${registerDto.lastName}`;
     await this.sendOtp(registerDto.email, OTPPurpose.VERIFICATION, fullName);
 
-    return { message: 'Registered, OTP sent to mail', userId: user.id };
+    return { message: 'Registered, OTP sent to mail', userEmail: user.email };
   }
 
   async sendOtp(email: string, purpose: OTPPurpose, fullName: string) {

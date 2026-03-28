@@ -32,9 +32,9 @@ export class WithdrawalController {
     @Post('initialize')
     @HttpCode(HttpStatus.CREATED)
     async initialize(
-        @Request() req: { user: { id: string } },
+        @Request() req: { user: { userId: string } },
         @Body() dto: InitializeWithdrawalDto,
     ) {
-        return this.withdrawalService.initializeWithdrawal(req.user.id, dto);
+        return this.withdrawalService.initializeWithdrawal(req.user.userId, dto);
     }
 }

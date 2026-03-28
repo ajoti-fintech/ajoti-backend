@@ -4,9 +4,13 @@ import * as crypto from 'crypto';
 import { PrismaService } from '@/prisma/prisma.service';
 import { WalletService } from '../wallet/wallet.service';
 import { InitializeFundingDto } from './dto/funding.dto';
-import { TransactionStatus, TransactionType } from '@prisma/client';
+import { Prisma, TransactionStatus, TransactionType } from '@prisma/client';
 import { TransactionsService } from '../transactions/transactions.service';
 import { FlutterwaveProvider } from '../flutterwave/flutterwave.provider';
+import {
+  FundingReconciliationScheduler,
+  ManualFundingReconcileResult,
+} from './funding-reconciliation.scheduler';
 
 @Injectable()
 export class FundingService {
@@ -17,6 +21,7 @@ export class FundingService {
     private readonly transactionsService: TransactionsService,
     private readonly flw: FlutterwaveProvider,
     private readonly prisma: PrismaService,
+    private readonly fundingReconciliationScheduler: FundingReconciliationScheduler,
   ) {}
 
   /**
@@ -49,10 +54,7 @@ export class FundingService {
       status: TransactionStatus.PENDING,
       currency: dto.currency ?? 'NGN',
       provider: 'FLUTTERWAVE',
-      metadata: {
-        paymentMethod: dto.paymentMethod,
-        ...dto.metadata,
-      },
+      metadata: dto.metadata ? (dto.metadata as Prisma.InputJsonValue) : undefined,
     });
 
     const user = await this.prisma.user.findUnique({ where: { id: userId } });
@@ -68,7 +70,7 @@ export class FundingService {
         name: user ? `${user.firstName} ${user.lastName}`.trim() : undefined,
         phonenumber: user?.phone ?? undefined,
       },
-      // All three channels in one hosted checkout
+      // Let checkout UI handle method selection (card, bank transfer, ussd).
       payment_options: 'card,banktransfer,ussd',
       meta: {
         transactionId: transaction.id,
@@ -128,5 +130,20 @@ export class FundingService {
         description: 'Use your bank\'s USSD code. No internet required.',
       },
     ];
+  }
+
+  async manualReconcileByReference(
+    reference: string,
+    superAdminId: string,
+  ): Promise<ManualFundingReconcileResult> {
+    const normalizedReference = reference.trim();
+    if (!normalizedReference) {
+      throw new BadRequestException('Transaction reference is required');
+    }
+
+    return this.fundingReconciliationScheduler.reconcileByReference(
+      normalizedReference,
+      superAdminId,
+    );
   }
 }

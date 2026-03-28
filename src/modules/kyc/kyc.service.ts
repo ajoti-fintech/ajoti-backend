@@ -9,6 +9,7 @@ import { PrismaService } from 'src/prisma/prisma.service';
 import { IdentityVerificationService } from './identity-verification.service';
 import { KYCStatus, KYCStep, KYC } from '@prisma/client';
 import { VerifyNinDto, VerifyBvnDto, VerifyNokDto, KycResponseDto } from './dto/kyc.dto';
+import { VirtualAccountService } from '../virtual-accounts/virtual-account.service';
 
 @Injectable()
 export class KycService {
@@ -16,6 +17,7 @@ export class KycService {
     private readonly configService: ConfigService,
     private readonly prisma: PrismaService,
     private readonly identityService: IdentityVerificationService,
+    private readonly virtualAccountService: VirtualAccountService,
   ) {}
 
   /**
@@ -186,6 +188,10 @@ export class KycService {
         },
       });
     });
+
+    // Internal sync: if user already has a static VA, update BVN at provider.
+    // This is best-effort and does not block KYC completion.
+    await this.virtualAccountService.syncBvnFromKyc(userId, bvn);
 
     return this.mapToResponseDto(updatedKyc);
   }

@@ -15,7 +15,7 @@ export interface FlwInitiatePaymentPayload {
         name?: string;
         phonenumber?: string;
     };
-    payment_options?: string; // e.g. 'card,banktransfer,ussd'
+    payment_options?: string; // e.g. 'card, banktransfer , ussd'
     meta?: Record<string, unknown>;
     customizations?: {
         title?: string;
@@ -126,15 +126,23 @@ export interface FlwAccountResolveResponse {
 
 export interface FlwCreateVirtualAccountPayload {
     email: string;
+    /**
+     * true  => static/permanent VA
+     * false => dynamic/temporary VA
+     *
+     * For Ajoti wallet funding we use static VAs.
+     */
     is_permanent: boolean;
     bvn?: string;
+    nin?: string;
     tx_ref: string; // Our stable reference — e.g. AJOTI-VA-{userId}
-    currency: string;
+    currency?: string;
     narration: string;
     firstname: string;
     lastname: string;
     phonenumber?: string;
-    amount?: number; // Required only for non-permanent VAs
+    amount?: number;
+    frequency?: number | string;
 }
 
 export interface FlwVirtualAccountData {
@@ -147,7 +155,8 @@ export interface FlwVirtualAccountData {
     account_name?: string;
     created_at: string;
     expiry_date: string;
-    amount: number | null;
+    // Docs examples return a string (e.g. "0.00"), so keep this flexible.
+    amount: string | number | null;
     frequency: string;
     is_active?: boolean;
     note?: string;
@@ -157,6 +166,12 @@ export interface FlwVirtualAccountResponse {
     status: string;
     message: string;
     data: FlwVirtualAccountData;
+}
+
+export interface FlwGenericResponse<T = Record<string, unknown> | null> {
+    status: string;
+    message: string;
+    data?: T;
 }
 
 // ─── Provider ────────────────────────────────────────────────────────────────
@@ -323,6 +338,47 @@ export class FlutterwaveProvider {
         }
     }
 
+    /**
+     * Verify a transaction by your merchant reference (tx_ref).
+     * Useful for reconciliation jobs when webhook payload/transaction ID is missing.
+     */
+    async verifyTransactionByReference(
+        txRef: string,
+    ): Promise<FlwVerifyTransactionResponse> {
+        if (this.isMockMode) {
+            return {
+                status: 'success',
+                message: 'Mock verification by reference',
+                data: {
+                    id: Math.floor(Math.random() * 1_000_000),
+                    tx_ref: txRef,
+                    flw_ref: `FLW-MOCK-${txRef}`,
+                    amount: 1000,
+                    charged_amount: 1000,
+                    currency: 'NGN',
+                    status: 'successful',
+                    customer: { id: 0, name: 'Mock User', email: 'mock@test.com' },
+                },
+            };
+        }
+
+        try {
+            const { data } = await this.client.get<FlwVerifyTransactionResponse>(
+                '/transactions/verify_by_reference',
+                {
+                    params: { tx_ref: txRef },
+                },
+            );
+            return data;
+        } catch (error) {
+            this.logger.error(
+                `verifyTransactionByReference error: tx_ref=${txRef}`,
+                this.extractError(error),
+            );
+            throw error;
+        }
+    }
+
     // ─── Transfers (Outflow — Bank Withdrawals) ───────────────────────────────
 
     /**
@@ -440,17 +496,18 @@ export class FlutterwaveProvider {
     // ─── Virtual Accounts ─────────────────────────────────────────────────────
 
     /**
-     * Create a permanent dedicated NGN virtual account for a user.
+     * Create a virtual account number.
      *
-     * Each user gets a unique Wema Bank account number.
-     * Anyone who sends money to this account triggers a `charge.completed`
-     * webhook with payment_type='bank_transfer' and tx_ref = our stable VA ref.
+     * Static (permanent) VA:
+     *   - set is_permanent=true
+     *   - include tx_ref + customer details (+ BVN/NIN where required)
      *
-     * BVN requirements:
-     *   - Live mode: real BVN from approved KYC is mandatory
-     *   - Test mode: uses FLW's sandbox BVN (22222222222) if no KYC BVN present
+     * Dynamic (temporary) VA:
+     *   - omit is_permanent or set false
+     *   - include amount (> 0) and optional frequency
      *
-     * Currency is always NGN for now (SRS: NGN only in scope).
+     * Flutterwave v3 endpoint:
+     *   POST /v3/virtual-account-numbers
      */
     async createVirtualAccount(
         payload: FlwCreateVirtualAccountPayload,
@@ -472,7 +529,7 @@ export class FlutterwaveProvider {
                     account_name: `${payload.firstname} ${payload.lastname}`,
                     created_at: new Date().toISOString(),
                     expiry_date: 'N/A',
-                    amount: null,
+                    amount: '0.00',
                     frequency: 'N/A',
                     is_active: true,
                 },
@@ -495,6 +552,19 @@ export class FlutterwaveProvider {
     }
 
     /**
+     * Convenience wrapper for static/permanent virtual account creation.
+     * Enforces is_permanent=true regardless of caller payload.
+     */
+    async createStaticVirtualAccount(
+        payload: Omit<FlwCreateVirtualAccountPayload, 'is_permanent'>,
+    ): Promise<FlwVirtualAccountResponse> {
+        return this.createVirtualAccount({
+            ...payload,
+            is_permanent: true,
+        });
+    }
+
+    /**
      * Fetch a virtual account's current details by its FLW order reference.
      */
     async getVirtualAccount(orderRef: string): Promise<FlwVirtualAccountResponse> {
@@ -506,6 +576,84 @@ export class FlutterwaveProvider {
         } catch (error) {
             this.logger.error(
                 `getVirtualAccount error: orderRef=${orderRef}`,
+                this.extractError(error),
+            );
+            throw error;
+        }
+    }
+
+    /**
+     * Update BVN attached to an existing virtual account.
+     *
+     * Endpoint:
+     *   PUT /v3/virtual-account-numbers/{order_ref}
+     */
+    async updateVirtualAccountBvn(
+        orderRef: string,
+        bvn: string,
+    ): Promise<FlwVirtualAccountResponse> {
+        if (this.isMockMode) {
+            return {
+                status: 'success',
+                message: 'Mock BVN updated',
+                data: {
+                    response_code: '00',
+                    response_message: 'BVN updated',
+                    flw_ref: `FLW-MOCK-VA-${Date.now()}`,
+                    order_ref: orderRef,
+                    account_number: `990000${Math.floor(Math.random() * 10000)
+                        .toString()
+                        .padStart(4, '0')}`,
+                    bank_name: 'WEMA BANK',
+                    created_at: new Date().toISOString(),
+                    expiry_date: 'N/A',
+                    amount: '0.00',
+                    frequency: 'N/A',
+                    is_active: true,
+                    note: `BVN updated to ${bvn}`,
+                },
+            };
+        }
+
+        try {
+            const { data } = await this.client.put<FlwVirtualAccountResponse>(
+                `/virtual-account-numbers/${orderRef}`,
+                { bvn },
+            );
+            return data;
+        } catch (error) {
+            this.logger.error(
+                `updateVirtualAccountBvn error: orderRef=${orderRef}`,
+                this.extractError(error),
+            );
+            throw error;
+        }
+    }
+
+    /**
+     * Delete/deactivate a virtual account.
+     *
+     * Endpoint:
+     *   POST /v3/virtual-account-numbers/{order_ref}
+     */
+    async deleteVirtualAccount(orderRef: string): Promise<FlwGenericResponse> {
+        if (this.isMockMode) {
+            return {
+                status: 'success',
+                message: 'Mock virtual account deleted',
+                data: { order_ref: orderRef },
+            };
+        }
+
+        try {
+            const { data } = await this.client.post<FlwGenericResponse>(
+                `/virtual-account-numbers/${orderRef}`,
+                {},
+            );
+            return data;
+        } catch (error) {
+            this.logger.error(
+                `deleteVirtualAccount error: orderRef=${orderRef}`,
                 this.extractError(error),
             );
             throw error;

@@ -6,17 +6,10 @@ import {
   IsNumber,
   Min,
   Max,
-  IsEnum,
   IsOptional,
   IsObject,
   IsIn,
 } from 'class-validator';
-
-export enum PaymentMethod {
-  CARD = 'CARD',
-  BANK_TRANSFER = 'BANK_TRANSFER',
-  USSD = 'USSD',
-}
 
 export class InitializeFundingDto {
   @ApiProperty({
@@ -38,15 +31,6 @@ export class InitializeFundingDto {
   @IsString()
   @IsNotEmpty()
   redirectUrl: string;
-
-  @ApiProperty({
-    enum: PaymentMethod,
-    example: PaymentMethod.CARD,
-    description: 'Payment method',
-  })
-  @IsEnum(PaymentMethod)
-  @IsNotEmpty()
-  paymentMethod: PaymentMethod;
 
   @ApiPropertyOptional({
     example: 'NGN',
