@@ -43,39 +43,46 @@ const ENV = process.env.NODE_ENV || 'development';
 
     ScheduleModule.forRoot(),
 
-    BullModule.forRootAsync({
-      imports: [ConfigModule],
-      inject: [ConfigService],
-      useFactory: (configService: ConfigService) => ({
-        connection: {
-          host: configService.get<string>('REDIS_HOST', 'localhost'),
-          port: configService.get<number>('REDIS_PORT', 6379),
-          password: configService.get<string>('REDIS_PASSWORD') || undefined,
-          url: configService.get('REDIS_URL'),
-          // You can add more options later: db, tls, maxRetriesPerRequest, etc.
-        },
-        maxRetriesPerRequest: null,
-      }),
-    }),
+    // Inside AppModule imports...
 
-    ThrottlerModule.forRootAsync({
-      imports: [ConfigModule],
-      inject: [ConfigService],
-      useFactory: (config: ConfigService) => ({
-        throttlers: [
-          {
-            name: 'default',
-            ttl: config.get<number>('THROTTLE_TTL', 60_000),
-            limit: config.get<number>('THROTTLE_LIMIT', 100),
+BullModule.forRootAsync({
+  imports: [ConfigModule],
+  inject: [ConfigService],
+  useFactory: (config: ConfigService) => {
+    const redisUrl = config.get('REDIS_URL');
+    return {
+      connection: redisUrl 
+        ? { url: redisUrl } // Use full string on Render
+        : {
+            host: config.get('REDIS_HOST', 'localhost'),
+            port: config.get<number>('REDIS_PORT', 6379),
+            password: config.get('REDIS_PASSWORD'),
           },
-        ],
-        storage: new ThrottlerStorageRedisService({
-          host: config.get<string>('REDIS_HOST', 'localhost'),
-          port: config.get<number>('REDIS_PORT', 6379),
-          password: config.get<string>('REDIS_PASSWORD') || undefined,
-        }),
-      }),
-    }),
+      maxRetriesPerRequest: null, // This fixes the 'MaxRetriesPerRequestError'
+    };
+  },
+}),
+
+ThrottlerModule.forRootAsync({
+  imports: [ConfigModule],
+  inject: [ConfigService],
+  useFactory: (config: ConfigService) => {
+    const redisUrl = config.get('REDIS_URL');
+    return {
+      throttlers: [{
+        ttl: config.get('THROTTLE_TTL', 60000),
+        limit: config.get('THROTTLE_LIMIT', 100),
+      }],
+      // Fix: Use the URL string directly for the Throttler storage
+      storage: redisUrl 
+        ? new ThrottlerStorageRedisService(redisUrl)
+        : new ThrottlerStorageRedisService({
+            host: config.get('REDIS_HOST', 'localhost'),
+            port: config.get('REDIS_PORT', 6379),
+          }),
+    };
+  },
+}),
 
     PrismaModule,
     HealthModule,
