@@ -17,7 +17,7 @@ import {
   VerifyPhotoDto,
   VerifyProofOfAddressDto,
 } from './dto/kyc.dto';
-import { KafkaService } from '../kafka/kafka.service';
+// import { KafkaService } from '../kafka/kafka.service';
 import * as path from 'path';
 
 type PhotoFiles = {
@@ -32,7 +32,7 @@ export class KycService {
     private readonly configService: ConfigService,
     private readonly prisma: PrismaService,
     private readonly identityService: IdentityVerificationService,
-    private readonly kafkaService: KafkaService,
+    // private readonly kafkaService: KafkaService,
   ) {}
 
   private fileToPublicUrl(file: Express.Multer.File) {
@@ -411,7 +411,8 @@ export class KycService {
       }),
     ]);
 
-    await this.kafkaService.emit('kyc.status.changed', {
+    // TODO: Replace with BullMQ later
+    console.warn(`[KycService] KYC Approved - Event would have been emitted to Kafka:`, {
       userId,
       email: user?.email,
       fullName: `${user?.firstName} ${user?.lastName}`,
@@ -458,7 +459,8 @@ export class KycService {
       }),
     ]);
 
-    await this.kafkaService.emit('kyc.status.changed', {
+    // TODO: Replace with BullMQ later
+    console.warn(`[KycService] KYC Approved - Event would have been emitted to Kafka:`, {
       userId,
       email: user?.email,
       fullName: `${user?.firstName} ${user?.lastName}`,

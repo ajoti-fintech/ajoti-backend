@@ -7,12 +7,13 @@ import { JwtModule } from '@nestjs/jwt';
 import { JwtStrategy } from './jwt.strategy';
 import { PassportModule } from '@nestjs/passport';
 import { ConfigModule, ConfigService } from '@nestjs/config';
-import { KafkaModule } from '../kafka/kafka.module';
 import { OtpModule } from '../otp/otp.module';
+
+// import { KafkaModule } from '../kafka/kafka.module';   // Temporarily disabled for BullMQ migration
 
 @Module({
   imports: [
-    KafkaModule,
+    // KafkaModule,     // Commented out - we'll replace with BullMQ later
     UsersModule,
     MailModule,
     PassportModule.register({ defaultStrategy: 'jwt' }),

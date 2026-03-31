@@ -21,12 +21,16 @@ import { hashValue, verifyHash } from '@/common';
 import * as crypto from 'crypto';
 import { resetPasswordOtpTemplate } from '../mail/templates/otp-reset-password';
 import { verificationOtpTemplate } from '../mail/templates/otp-verification';
-import { KafkaService } from '../kafka/kafka.service';
+// import { KafkaService } from '../kafka/kafka.service';
 import { OtpService } from '../otp/otp.service';
+import { StringValue } from 'ms';
 
 function sha256(input: string) {
   return crypto.createHash('sha256').update(input).digest('hex');
 }
+import { MailQueue } from '../mail/mail.queue';           // New
+import { AUTH_EVENTS_QUEUE } from './auth.events';        // New
+import { InjectQueue } from '@nestjs/bullmq';
 
 @Injectable()
 export class AuthService {
@@ -34,29 +38,46 @@ export class AuthService {
     private prisma: PrismaService,
     private config: ConfigService,
     private jwt: JwtService,
-    private readonly kafkaService: KafkaService,
+    // private readonly kafkaService: KafkaService,
     private readonly otpService: OtpService,
+  private readonly mailQueue: MailQueue,                    // For emails if needed directly
+    @InjectQueue(AUTH_EVENTS_QUEUE) private readonly authEventsQueue: Queue,   // For system events
   ) {}
 
   private logger = new Logger('HTTP');
 
   private async issueTokens(userId: string, role: Role) {
-    const access = await this.jwt.signAsync(
+    // 1. ENFORCE SINGLE SESSION: Revoke all existing non-revoked tokens for this user
+    // This ensures that logging in on Device B kicks the user off Device A.
+    await this.prisma.refreshToken.updateMany({
+      where: {
+        userId,
+        revokedAt: null,
+      },
+      data: {
+        revokedAt: new Date(),
+      },
+    });
+
+    // 2. Access Token Generation
+    const accessExpires = this.config.get<string>('JWT_ACCESS_EXPIRES_IN') || '30m';
+    const accessToken = await this.jwt.signAsync(
       { sub: userId, role },
       {
         secret: this.config.get<string>('JWT_ACCESS_SECRET'),
-        expiresIn: this.config.get<number>('JWT_ACCESS_EXPIRES_IN') || '15m',
+        expiresIn: accessExpires as StringValue,
       },
     );
 
+    // 3. Refresh Token Generation (Rotation ready)
     const refreshRaw = crypto.randomBytes(48).toString('hex');
     const refreshHash = sha256(refreshRaw);
 
-    const refreshDays = (this.config.get<string>('JWT_REFRESH_EXPIRES_IN') || '30d').toLowerCase();
-    // quick parse: "30d" only (keep it simple)
-    const days = Number(refreshDays.replace('d', '')) || 30;
-    const refreshExpires = new Date(Date.now() + days * 24 * 60 * 60_000);
+    const refreshExpiresIn = this.config.get<string>('JWT_REFRESH_EXPIRES_IN') || '7d';
+    const days = Number(refreshExpiresIn.toLowerCase().replace(/[^0-9]/g, '')) || 7;
+    const refreshExpires = new Date(Date.now() + days * 24 * 60 * 60 * 1000);
 
+    // 4. Store the NEW valid session
     await this.prisma.refreshToken.create({
       data: {
         userId,
@@ -65,7 +86,36 @@ export class AuthService {
       },
     });
 
-    return { accessToken: access, refreshToken: refreshRaw };
+    return {
+      accessToken,
+      refreshToken: refreshRaw,
+      expiresIn: accessExpires,
+    };
+  }
+
+  async refreshTokens(refreshToken: string) {
+    if (!refreshToken) throw new BadRequestException('Refresh token is required');
+
+    const tokenHash = sha256(refreshToken);
+
+    // 1. Find the token and ensure it's still valid
+    const storedToken = await this.prisma.refreshToken.findFirst({
+      where: {
+        tokenHash,
+        revokedAt: null,
+        expiresAt: { gt: new Date() },
+      },
+      include: { user: true },
+    });
+
+    if (!storedToken) {
+      throw new UnauthorizedException('Invalid or expired refresh token');
+    }
+
+    // 2. Just issue the new pair.
+    // Since issueTokens() has the 'updateMany' logic, it will
+    // automatically revoke this 'storedToken' along with any others.
+    return this.issueTokens(storedToken.user.id, storedToken.user.role);
   }
 
   async register(registerDto: RegisterDto) {
@@ -97,8 +147,8 @@ export class AuthService {
       buildHtml: (args) => verificationOtpTemplate(args.otp, args.expiryMinutes, fullName),
     });
 
-    await this.kafkaService.emit('auth.user.registered', {
-      userId: user.id,
+await this.authEventsQueue.add('user.registered', {
+        userId: user.id,
       email: user.email,
       fullName,
       timestamp: new Date().toISOString(),
@@ -170,7 +220,7 @@ export class AuthService {
       buildHtml: (args) => verificationOtpTemplate(args.otp, args.expiryMinutes, fullName),
     });
 
-    await this.kafkaService.emit('auth.user.registered', {
+    console.warn(`[AuthService] Event 'auth.user.registered' would have been emitted:`, {
       userId: user.id,
       email: user.email,
       fullName,
@@ -226,7 +276,7 @@ export class AuthService {
       data: { isVerified: true },
     });
 
-    await this.kafkaService.emit('auth.email.verified', {
+   console.warn(`[AuthService] Event 'auth.email.verified' would have been emitted:`, {
       userId: user.id,
       email: user.email,
       timestamp: new Date().toISOString(),
@@ -248,7 +298,7 @@ export class AuthService {
 
     const tokens = await this.issueTokens(user.id, user.role);
 
-    await this.kafkaService.emit('auth.user.logged-in', {
+    console.warn(`[AuthService] Event 'auth.user.logged-in' would have been emitted:`, {
       userId: user.id,
       email: user.email,
       timestamp: new Date().toISOString(),
@@ -308,7 +358,7 @@ export class AuthService {
       data: { revokedAt: new Date() },
     });
 
-    await this.kafkaService.emit('auth.password.reset', {
+    console.warn(`[AuthService] Event 'auth.password.reset' would have been emitted:`, {
       userId: user.id,
       email: user.email,
       timestamp: new Date().toISOString(),
@@ -337,7 +387,7 @@ export class AuthService {
       data: { revokedAt: new Date() },
     });
 
-    await this.kafkaService.emit('auth.password.changed', {
+    console.warn(`[AuthService] Event 'auth.password.changed' would have been emitted:`, {
       userId: user.id,
       email: user.email,
       timestamp: new Date().toISOString(),

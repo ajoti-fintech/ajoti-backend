@@ -22,11 +22,14 @@ import { PayoutModule } from './modules/payout/payout.module';
 import { TrustModule } from './modules/trust/trust.module';
 import { TransactionsModule } from './modules/transactions/transactions.module';
 import { FundingModule } from './modules/funding/funding.module';
-import { KafkaModule } from './modules/kafka/kafka.module';
+// import { KafkaModule } from './modules/kafka/kafka.module';
 import { NotificationModule } from './modules/notification/notification.module';
 import { WithdrawalModule } from './modules/withdrawal/withdrawal.module';
 import { VirtualAccountModule } from './modules/virtual-accounts/virtual-account.module'; // ← NEW
 import { OtpModule } from './modules/otp/otp.module';
+import redisConfig from './config/redis.config';
+import { BullModule } from '@nestjs/bullmq';
+import { ThrottlerStorageRedisService } from 'nestjs-throttler-storage-redis';
 
 const ENV = process.env.NODE_ENV || 'development';
 
@@ -34,13 +37,27 @@ const ENV = process.env.NODE_ENV || 'development';
   imports: [
     ConfigModule.forRoot({
       isGlobal: true,
-      load: [appConfig, flutterwaveConfig], // ← flutterwaveConfig added
+      load: [appConfig, flutterwaveConfig, redisConfig], // ← flutterwaveConfig added
       envFilePath: [`.env.${ENV}.local`, `.env.${ENV}`, '.env.local', '.env'],
     }),
 
     ScheduleModule.forRoot(),
 
+    BullModule.forRootAsync({
+      imports: [ConfigModule],
+      inject: [ConfigService],
+      useFactory: (configService: ConfigService) => ({
+        connection: {
+          host: configService.get<string>('REDIS_HOST', 'localhost'),
+          port: configService.get<number>('REDIS_PORT', 6379),
+          password: configService.get<string>('REDIS_PASSWORD') || undefined,
+          // You can add more options later: db, tls, maxRetriesPerRequest, etc.
+        },
+      }),
+    }),
+
     ThrottlerModule.forRootAsync({
+      imports: [ConfigModule],
       inject: [ConfigService],
       useFactory: (config: ConfigService) => ({
         throttlers: [
@@ -50,6 +67,11 @@ const ENV = process.env.NODE_ENV || 'development';
             limit: config.get<number>('THROTTLE_LIMIT', 100),
           },
         ],
+        storage: new ThrottlerStorageRedisService({
+          host: config.get<string>('REDIS_HOST', 'localhost'),
+          port: config.get<number>('REDIS_PORT', 6379),
+          password: config.get<string>('REDIS_PASSWORD') || undefined,
+        }),
       }),
     }),
 
@@ -67,7 +89,7 @@ const ENV = process.env.NODE_ENV || 'development';
     TrustModule,
     TransactionsModule,
     FundingModule,
-    KafkaModule,
+    // KafkaModule,
     NotificationModule,
     WithdrawalModule,
     VirtualAccountModule,

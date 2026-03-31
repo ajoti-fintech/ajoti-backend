@@ -1,0 +1,1 @@
+export const AUTH_EVENTS_QUEUE = 'auth-events-queue';

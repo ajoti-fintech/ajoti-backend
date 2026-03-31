@@ -1,18 +1,19 @@
 import { Injectable } from '@nestjs/common';
-import { KafkaService } from '../kafka/kafka.service';
 import { randomUUID } from 'crypto';
 
 @Injectable()
 export class MailProducer {
-  constructor(private readonly kafka: KafkaService) {}
+  constructor() {}
 
   async enqueue(to: string, subject: string, html: string) {
-    await this.kafka.emit('mail.send', {
-      id: randomUUID(),
+    console.warn(`[MailProducer] Email enqueued - BullMQ not yet connected:`, {
       to,
       subject,
-      html,
-      createdAt: new Date().toISOString(),
+      htmlLength: html?.length || 0,
+      timestamp: new Date().toISOString(),
     });
+
+    // TODO: Replace this with BullMQ job when we finish Step 1
+    // For now we just log so the app can start
   }
 }
