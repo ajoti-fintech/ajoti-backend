@@ -8,6 +8,7 @@ import {
   // ServiceUnavailableException,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import { InjectQueue } from '@nestjs/bullmq';
 import { JwtService } from '@nestjs/jwt';
 import {
   ChangePasswordDto,
@@ -19,18 +20,16 @@ import {
 import { OTPPurpose, Role } from '@prisma/client';
 import { hashValue, verifyHash } from '@/common';
 import * as crypto from 'crypto';
+import { Queue } from 'bullmq';
+import { StringValue } from 'ms';
 import { resetPasswordOtpTemplate } from '../mail/templates/otp-reset-password';
 import { verificationOtpTemplate } from '../mail/templates/otp-verification';
-// import { KafkaService } from '../kafka/kafka.service';
 import { OtpService } from '../otp/otp.service';
-import { StringValue } from 'ms';
+import { AUTH_EVENTS_QUEUE } from './auth.events';
 
 function sha256(input: string) {
   return crypto.createHash('sha256').update(input).digest('hex');
 }
-import { MailQueue } from '../mail/mail.queue';           // New
-import { AUTH_EVENTS_QUEUE } from './auth.events';        // New
-import { InjectQueue } from '@nestjs/bullmq';
 
 @Injectable()
 export class AuthService {
@@ -38,10 +37,8 @@ export class AuthService {
     private prisma: PrismaService,
     private config: ConfigService,
     private jwt: JwtService,
-    // private readonly kafkaService: KafkaService,
     private readonly otpService: OtpService,
-  private readonly mailQueue: MailQueue,                    // For emails if needed directly
-    @InjectQueue(AUTH_EVENTS_QUEUE) private readonly authEventsQueue: Queue,   // For system events
+    @InjectQueue(AUTH_EVENTS_QUEUE) private readonly authEventsQueue: Queue,
   ) {}
 
   private logger = new Logger('HTTP');
@@ -147,12 +144,19 @@ export class AuthService {
       buildHtml: (args) => verificationOtpTemplate(args.otp, args.expiryMinutes, fullName),
     });
 
-await this.authEventsQueue.add('user.registered', {
+    await this.authEventsQueue.add(
+      'user.registered',
+      {
         userId: user.id,
-      email: user.email,
-      fullName,
-      timestamp: new Date().toISOString(),
-    });
+        email: user.email,
+        fullName,
+        timestamp: new Date().toISOString(),
+      },
+      {
+        removeOnComplete: true,
+        attempts: 5,
+      },
+    );
 
     return { message: 'Registered, OTP sent to mail', userId: user.id };
   }
@@ -220,12 +224,19 @@ await this.authEventsQueue.add('user.registered', {
       buildHtml: (args) => verificationOtpTemplate(args.otp, args.expiryMinutes, fullName),
     });
 
-    console.warn(`[AuthService] Event 'auth.user.registered' would have been emitted:`, {
-      userId: user.id,
-      email: user.email,
-      fullName,
-      timestamp: new Date().toISOString(),
-    });
+    await this.authEventsQueue.add(
+      'user.registered',
+      {
+        userId: user.id,
+        email: user.email,
+        fullName,
+        timestamp: new Date().toISOString(),
+      },
+      {
+        removeOnComplete: true,
+        attempts: 5,
+      },
+    );
 
     return { message: 'Registered/Upgraded, OTP sent to mail', userId: user.id };
   }
@@ -276,11 +287,18 @@ await this.authEventsQueue.add('user.registered', {
       data: { isVerified: true },
     });
 
-   console.warn(`[AuthService] Event 'auth.email.verified' would have been emitted:`, {
-      userId: user.id,
-      email: user.email,
-      timestamp: new Date().toISOString(),
-    });
+    await this.authEventsQueue.add(
+      'email.verified',
+      {
+        userId: user.id,
+        email: user.email,
+        timestamp: new Date().toISOString(),
+      },
+      {
+        removeOnComplete: true,
+        attempts: 5,
+      },
+    );
 
     return { message: 'email verified' };
   }
@@ -298,11 +316,18 @@ await this.authEventsQueue.add('user.registered', {
 
     const tokens = await this.issueTokens(user.id, user.role);
 
-    console.warn(`[AuthService] Event 'auth.user.logged-in' would have been emitted:`, {
-      userId: user.id,
-      email: user.email,
-      timestamp: new Date().toISOString(),
-    });
+    await this.authEventsQueue.add(
+      'user.logged-in',
+      {
+        userId: user.id,
+        email: user.email,
+        timestamp: new Date().toISOString(),
+      },
+      {
+        removeOnComplete: true,
+        attempts: 5,
+      },
+    );
 
     return {
       // message: 'Logged in',
@@ -358,11 +383,18 @@ await this.authEventsQueue.add('user.registered', {
       data: { revokedAt: new Date() },
     });
 
-    console.warn(`[AuthService] Event 'auth.password.reset' would have been emitted:`, {
-      userId: user.id,
-      email: user.email,
-      timestamp: new Date().toISOString(),
-    });
+    await this.authEventsQueue.add(
+      'auth.password.reset',
+      {
+        userId: user.id,
+        email: user.email,
+        timestamp: new Date().toISOString(),
+      },
+      {
+        removeOnComplete: true,
+        attempts: 5,
+      },
+    );
 
     return { message: 'Password reset successful.' };
   }
@@ -387,11 +419,18 @@ await this.authEventsQueue.add('user.registered', {
       data: { revokedAt: new Date() },
     });
 
-    console.warn(`[AuthService] Event 'auth.password.changed' would have been emitted:`, {
-      userId: user.id,
-      email: user.email,
-      timestamp: new Date().toISOString(),
-    });
+    await this.authEventsQueue.add(
+      'auth.password.changed',
+      {
+        userId: user.id,
+        email: user.email,
+        timestamp: new Date().toISOString(),
+      },
+      {
+        removeOnComplete: true,
+        attempts: 5,
+      },
+    );
 
     return { message: 'Password changed.' };
   }

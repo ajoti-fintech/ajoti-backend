@@ -4,7 +4,7 @@ import { ConfigService } from '@nestjs/config';
 import { OTPPurpose } from '@prisma/client';
 import { generateOtpCode, hashValue, verifyHash } from '@/common';
 import { MailErrorMapper } from '@/common/error/mail-error';
-import { MailProducer } from '../mail/mail.producer';
+import { MailQueue } from '../mail/mail.queue';
 
 type SendOtpOptions = {
   subject: string;
@@ -21,7 +21,7 @@ export class OtpService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly config: ConfigService,
-    private readonly mailQueue: MailProducer,
+    private readonly mailQueue: MailQueue,
     private readonly mailErrorMapper: MailErrorMapper,
   ) {}
 

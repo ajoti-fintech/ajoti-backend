@@ -48,9 +48,10 @@ const ENV = process.env.NODE_ENV || 'development';
       inject: [ConfigService],
       useFactory: (configService: ConfigService) => ({
         connection: {
-          host: configService.get<string>('REDIS_HOST', 'localhost'),
-          port: configService.get<number>('REDIS_PORT', 6379),
-          password: configService.get<string>('REDIS_PASSWORD') || undefined,
+          // host: configService.get<string>('REDIS_HOST', 'localhost'),
+          // port: configService.get<number>('REDIS_PORT', 6379),
+          // password: configService.get<string>('REDIS_PASSWORD') || undefined,
+          url: configService.get('REDIS_URL'),
           // You can add more options later: db, tls, maxRetriesPerRequest, etc.
         },
       }),

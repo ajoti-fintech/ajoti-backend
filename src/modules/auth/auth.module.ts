@@ -6,16 +6,18 @@ import { MailModule } from '../mail/mail.module';
 import { JwtModule } from '@nestjs/jwt';
 import { JwtStrategy } from './jwt.strategy';
 import { PassportModule } from '@nestjs/passport';
+import { BullModule } from '@nestjs/bullmq';
 import { ConfigModule, ConfigService } from '@nestjs/config';
 import { OtpModule } from '../otp/otp.module';
-
-// import { KafkaModule } from '../kafka/kafka.module';   // Temporarily disabled for BullMQ migration
+import { AUTH_EVENTS_QUEUE } from './auth.events';
 
 @Module({
   imports: [
-    // KafkaModule,     // Commented out - we'll replace with BullMQ later
     UsersModule,
     MailModule,
+    BullModule.registerQueue({
+      name: AUTH_EVENTS_QUEUE,
+    }),
     PassportModule.register({ defaultStrategy: 'jwt' }),
     JwtModule.registerAsync({
       imports: [ConfigModule],

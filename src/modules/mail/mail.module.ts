@@ -5,31 +5,25 @@ import { MailErrorMapper } from '@/common/error/mail-error';
 import { BullModule } from '@nestjs/bullmq';
 import { MailQueue, MAIL_QUEUE } from './mail.queue';
 import { MailProcessor } from './mail.processor';
-// import { MailProducer } from './mail.producer'; // Obsolete - replaced by MailQueue
-// import { MailConsumer } from './mail.consumer'; // Obsolete - replaced by MailProcessor
 
 @Module({
   imports: [
     ConfigModule,
-    // Registers the BullMQ queue for this module
     BullModule.registerQueue({
       name: MAIL_QUEUE,
     }),
   ],
   providers: [
-    MailService, 
-    MailErrorMapper, 
-    MailQueue,     // New BullMQ Producer
-    MailProcessor  // New BullMQ Worker
-    // MailProducer, 
+    MailService,
+    MailErrorMapper,
+    MailQueue,
+    MailProcessor,
   ],
-  controllers: [
-    // MailConsumer // No longer needed as we use the Processor worker
-  ],
+  controllers: [],
   exports: [
-    MailService, 
-    MailErrorMapper, 
-    MailQueue      // Export this so Auth/OTP can inject it
+    MailService,
+    MailErrorMapper,
+    MailQueue,
   ],
 })
 export class MailModule {}

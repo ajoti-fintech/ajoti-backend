@@ -17,8 +17,10 @@ import {
   VerifyPhotoDto,
   VerifyProofOfAddressDto,
 } from './dto/kyc.dto';
-// import { KafkaService } from '../kafka/kafka.service';
+import { InjectQueue } from '@nestjs/bullmq';
+import { Queue } from 'bullmq';
 import * as path from 'path';
+import { AUTH_EVENTS_QUEUE } from '../auth/auth.events';
 
 type PhotoFiles = {
   selfie: Express.Multer.File;
@@ -32,7 +34,7 @@ export class KycService {
     private readonly configService: ConfigService,
     private readonly prisma: PrismaService,
     private readonly identityService: IdentityVerificationService,
-    // private readonly kafkaService: KafkaService,
+    @InjectQueue(AUTH_EVENTS_QUEUE) private readonly authEventsQueue: Queue,
   ) {}
 
   private fileToPublicUrl(file: Express.Multer.File) {
@@ -411,14 +413,20 @@ export class KycService {
       }),
     ]);
 
-    // TODO: Replace with BullMQ later
-    console.warn(`[KycService] KYC Approved - Event would have been emitted to Kafka:`, {
-      userId,
-      email: user?.email,
-      fullName: `${user?.firstName} ${user?.lastName}`,
-      status: 'APPROVED',
-      timestamp: new Date().toISOString(),
-    });
+    await this.authEventsQueue.add(
+      'kyc.status.changed',
+      {
+        userId,
+        email: user?.email,
+        status: 'APPROVED',
+      },
+      {
+        attempts: 5,
+        backoff: { type: 'exponential', delay: 5000 },
+        removeOnComplete: true,
+      },
+    );
+
     return this.mapToResponseDto(updatedKyc);
   }
 
@@ -459,15 +467,20 @@ export class KycService {
       }),
     ]);
 
-    // TODO: Replace with BullMQ later
-    console.warn(`[KycService] KYC Approved - Event would have been emitted to Kafka:`, {
-      userId,
-      email: user?.email,
-      fullName: `${user?.firstName} ${user?.lastName}`,
-      status: 'REJECTED',
-      reason: rejectionReason,
-      timestamp: new Date().toISOString(),
-    });
+    await this.authEventsQueue.add(
+      'kyc.status.changed',
+      {
+        userId,
+        email: user?.email,
+        status: 'REJECTED',
+        reason: rejectionReason,
+      },
+      {
+        attempts: 5,
+        backoff: { type: 'exponential', delay: 5000 },
+        removeOnComplete: true,
+      },
+    );
 
     return this.mapToResponseDto(updatedKyc);
   }
