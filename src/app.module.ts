@@ -54,6 +54,7 @@ const ENV = process.env.NODE_ENV || 'development';
           url: configService.get('REDIS_URL'),
           // You can add more options later: db, tls, maxRetriesPerRequest, etc.
         },
+        maxRetriesPerRequest: null,
       }),
     }),
 
