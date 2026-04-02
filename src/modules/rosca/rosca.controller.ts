@@ -52,6 +52,19 @@ export class RoscaController {
     };
   }
 
+  @Get(':circleId')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Get detailed view of a specific ROSCA circle' })
+  @ApiResponse({ status: 200, type: RoscaCircleResponseDto })
+  async getCircle(@Param('circleId') circleId: string, @CurrentUser('userId') userId: string) {
+    const circle = await this.roscaService.getCircle(circleId, userId);
+    return {
+      success: true,
+      message: 'Circle details retrieved successfully',
+      data: formatCircleResponse(circle), // This should now include admin/creator info
+    };
+  }
+
   @Post(':circleId/join')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Request to join a circle (reserves collateral)' })

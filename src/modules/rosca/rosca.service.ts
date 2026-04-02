@@ -299,9 +299,29 @@ export class RoscaService {
     const circle = await this.prisma.roscaCircle.findUnique({
       where: { id: circleId },
       include: {
-        memberships: {
-          where: { userId }, // Check if the requesting user is a member
+        // 1. Include Admin/Creator info
+        creator: {
+          select: {
+            firstName: true,
+            lastName: true,
+            email: true,
+          },
         },
+        // 2. Include all members with names and payout positions
+        memberships: {
+          include: {
+            user: {
+              select: {
+                firstName: true,
+                lastName: true,
+              },
+            },
+          },
+          orderBy: {
+            payoutPosition: 'asc', // Ensures positions are ordered
+          },
+        },
+        // 3. Keep your existing count and specific user check
         _count: {
           select: { memberships: true },
         },
@@ -309,7 +329,14 @@ export class RoscaService {
     });
 
     if (!circle) throw new NotFoundException('Circle not found');
-    return circle;
+
+    // Logic to identify if the requesting user is a member
+    const isMember = circle.memberships.some((m) => m.userId === userId);
+
+    return {
+      ...circle,
+      isRequestingUserMember: isMember,
+    };
   }
 
   /**

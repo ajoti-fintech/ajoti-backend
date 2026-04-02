@@ -131,7 +131,7 @@ export class AuthService {
         gender: registerDto.gender,
         phone: registerDto.phone,
         password: passwordHash,
-        role: Role.MEMBER,
+        role: registerDto.role,
         profile: { create: {} },
         kyc: { create: {} },
       },
