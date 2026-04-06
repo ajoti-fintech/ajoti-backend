@@ -1,5 +1,10 @@
 import * as crypto from 'crypto';
-import { Injectable, BadRequestException, NotFoundException } from '@nestjs/common';
+import {
+  Injectable,
+  BadRequestException,
+  NotFoundException,
+  ForbiddenException,
+} from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
 import { LedgerService } from '../ledger/ledger.service';
 import {
@@ -513,6 +518,57 @@ export class RoscaService {
     );
   }
 
+  /**
+   * Get payment schedules for a circle
+   */
+  async getSchedules(circleId: string) {
+    return await this.prisma.roscaCycleSchedule.findMany({
+      where: {
+        circleId,
+        obsoletedAt: null, // Only get active schedules (R5 compliance)
+      },
+      orderBy: { cycleNumber: 'asc' },
+    });
+  }
+
+  // =========================================================================
+  // ADMIN RETRIEVAL
+  // =========================================================================
+
+  /**
+   * [Admin] List all circles regardless of visibility
+   */
+
+  async getCircleByIdForAdmin(circleId: string, adminId: string) {
+    const circle = await this.prisma.roscaCircle.findUnique({
+      where: { id: circleId },
+      include: {
+        admin: {
+          select: { firstName: true, lastName: true, email: true },
+        },
+        memberships: {
+          include: {
+            user: {
+              select: { firstName: true, lastName: true },
+            },
+          },
+        },
+      },
+    });
+
+    if (!circle) {
+      throw new NotFoundException('ROSCA circle not found');
+    }
+
+    // Security check: Ensure this admin created the circle
+    // (You can skip this if you want SuperAdmins to see everything)
+    if (circle.adminId !== adminId) {
+      throw new ForbiddenException('You do not have permission to view this circle');
+    }
+
+    return circle;
+  }
+
   async updateCircle(circleId: string, userId: string, updateDto: UpdateCircleDto) {
     // 1. Find the circle and ensure the requester is the ADMIN
     const circle = await this.prisma.roscaCircle.findFirst({
@@ -547,26 +603,6 @@ export class RoscaService {
     });
   }
 
-  /**
-   * Get payment schedules for a circle
-   */
-  async getSchedules(circleId: string) {
-    return await this.prisma.roscaCycleSchedule.findMany({
-      where: {
-        circleId,
-        obsoletedAt: null, // Only get active schedules (R5 compliance)
-      },
-      orderBy: { cycleNumber: 'asc' },
-    });
-  }
-
-  // =========================================================================
-  // ADMIN RETRIEVAL
-  // =========================================================================
-
-  /**
-   * [Admin] List all circles regardless of visibility
-   */
   async adminListAllCircles(query: AdminListCirclesQueryDto) {
     const { status, adminId } = query;
 

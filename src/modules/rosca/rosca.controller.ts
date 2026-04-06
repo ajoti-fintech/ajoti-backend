@@ -130,6 +130,22 @@ export class RoscaController {
 export class RoscaAdminController {
   constructor(private readonly roscaService: RoscaService) {}
 
+  @Get(':circleId')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: '[Admin] Get full details of a specific ROSCA circle' })
+  @ApiResponse({ status: 200, type: RoscaCircleResponseDto })
+  async getCircleDetails(
+    @Param('circleId') circleId: string,
+    @CurrentUser('userId') adminId: string,
+  ) {
+    const circle = await this.roscaService.getCircleByIdForAdmin(circleId, adminId);
+    return {
+      success: true,
+      message: 'Circle details retrieved successfully',
+      data: formatCircleResponse(circle),
+    };
+  }
+
   @Post()
   @HttpCode(HttpStatus.CREATED)
   @ApiOperation({ summary: 'Create a new ROSCA circle' })

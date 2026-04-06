@@ -39,12 +39,13 @@ export class UsersService {
         lastName: true,
         phone: true,
         isVerified: true,
-        role: true, // Good to include for frontend routing
+        role: true,
         createdAt: true,
         wallet: {
           select: {
-            balance: true,
+            id: true, // needed to call getBalance
             currency: true,
+            status: true,
           },
         },
         virtualAccount: {
@@ -60,16 +61,22 @@ export class UsersService {
       throw new NotFoundException('User not found');
     }
 
-    // Standard practice: return a clean object with BigInts stringified
+    let walletData: { balance: string; currency: string; status: WalletStatus } | null = null;
+
+    if (user.wallet) {
+      const balance = await this.walletService.getBalance(user.wallet.id);
+      walletData = {
+        currency: user.wallet.currency,
+        status: user.wallet.status,
+        balance: BigInt(balance.available).toString(),
+      };
+    }
+
+    const { wallet: _, ...userWithoutWallet } = user;
+
     return {
-      ...user,
-      wallet: user.wallet
-        ? {
-            ...user.wallet,
-            // Cast to bigint to ensure .toString() is available
-            balance: (user.wallet.balance as bigint).toString(),
-          }
-        : null,
+      ...userWithoutWallet,
+      wallet: walletData,
     };
   }
 
