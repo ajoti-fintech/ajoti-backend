@@ -125,10 +125,17 @@ export class ActivateCircleDto {
 }
 
 export class ListCirclesQueryDto {
+  @ApiPropertyOptional({
+    enum: CircleStatus,
+    description: 'Filter circles by their current state (e.g., DRAFT, ACTIVE)',
+  })
   @IsOptional()
   @IsEnum(CircleStatus)
   status?: CircleStatus;
 
+  @ApiPropertyOptional({
+    description: 'Search circles by name (case-insensitive)',
+  })
   @IsOptional()
   @IsString()
   name?: string;
@@ -192,18 +199,19 @@ export class AdminListCirclesQueryDto {
 
 export class AdminResponseDto {
   @ApiProperty({ example: 'Jason' })
-  firstName: string;
+  firstName!: string;
 
   @ApiProperty({ example: 'Maxim' })
-  lastName: string;
+  lastName!: string;
 
   @ApiProperty({ example: 'admin@ajoti.com' })
-  email: string;
+  email!: string;
 }
 
 export class RoscaCircleResponseDto {
   @ApiProperty() id!: string;
   @ApiProperty() name!: string;
+  @ApiProperty() description!: string;
   @ApiProperty({ example: '500000' }) contributionAmount!: string;
   @ApiProperty() frequency!: CycleFrequency;
   @ApiProperty() durationCycles!: number;
@@ -220,6 +228,8 @@ export class RoscaCircleResponseDto {
   @ApiProperty() collateralPercentage!: number;
   @ApiProperty({ type: AdminResponseDto })
   admin!: AdminResponseDto;
+  @ApiProperty({ isArray: true, description: 'List of members in the circle' })
+  members!: any[]; // You can create a MemberResponseDto later for more strictness
 }
 
 export class RoscaMembershipResponseDto {
@@ -271,6 +281,7 @@ export function formatCircleResponse(circle: any): RoscaCircleResponseDto {
   return {
     id: circle.id,
     name: circle.name,
+    description: circle.description, // Added if you have it in your DTO
     contributionAmount: circle.contributionAmount.toString(),
     frequency: circle.frequency,
     durationCycles: circle.durationCycles,
@@ -279,11 +290,22 @@ export function formatCircleResponse(circle: any): RoscaCircleResponseDto {
     status: circle.status,
     startDate: circle.startDate,
     collateralPercentage: circle.collateralPercentage,
+
+    // Formatted Admin Object
     admin: {
       firstName: circle.admin.firstName,
       lastName: circle.admin.lastName,
       email: circle.admin.email,
     },
+    // NEW: Map memberships to a clean members array
+    members:
+      circle.memberships?.map((m: any) => ({
+        userId: m.userId,
+        name: `${m.user.firstName} ${m.user.lastName}`,
+        status: m.status,
+        position: m.payoutPosition,
+        joinedAt: m.joinedAt,
+      })) || [],
   };
 }
 

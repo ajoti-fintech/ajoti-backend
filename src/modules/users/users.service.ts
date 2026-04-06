@@ -30,19 +30,51 @@ export class UsersService {
   ) {}
 
   async findById(userId: string) {
-    return this.prisma.user.findUnique({ where: { id: userId } });
+    const user = await this.prisma.user.findUnique({
+      where: { id: userId },
+      select: {
+        id: true,
+        email: true,
+        firstName: true,
+        lastName: true,
+        phone: true,
+        isVerified: true,
+        role: true, // Good to include for frontend routing
+        createdAt: true,
+        wallet: {
+          select: {
+            balance: true,
+            currency: true,
+          },
+        },
+        virtualAccount: {
+          select: {
+            accountNumber: true,
+            bankName: true,
+          },
+        },
+      },
+    });
+
+    if (!user) {
+      throw new NotFoundException('User not found');
+    }
+
+    // Standard practice: return a clean object with BigInts stringified
+    return {
+      ...user,
+      wallet: user.wallet
+        ? {
+            ...user.wallet,
+            // Cast to bigint to ensure .toString() is available
+            balance: (user.wallet.balance as bigint).toString(),
+          }
+        : null,
+    };
   }
 
   /**
    * Fintech-safe account closure.
-   *
-   * We do NOT hard-delete the user row because historical financial records
-   * (ledger, contributions, payouts) must remain referentially intact.
-   * Instead, we:
-   * 1) validate ownership and password
-   * 2) ensure no active/pending obligations
-   * 3) delete VA at provider (if any)
-   * 4) close wallet + revoke auth + anonymize PII atomically
    */
   async closeAccount(userId: string, dto: DeleteUserAccountDto) {
     if (dto.confirm.trim().toUpperCase() !== 'DELETE') {
@@ -60,19 +92,22 @@ export class UsersService {
       throw new BadRequestException('Current password is incorrect');
     }
 
+    // 1. Ensure no financial or ROSCA obligations
     await this.ensureAccountCanBeClosed(userId);
 
+    // 2. Check for Virtual Account
     const existingVa = await this.prisma.virtualAccount.findUnique({
       where: { userId },
       select: { id: true },
     });
 
+    // 3. External API call (Provider) happens BEFORE DB transaction
     if (existingVa) {
       try {
         await this.virtualAccountService.deleteForUser(userId);
       } catch (error) {
         throw new ServiceUnavailableException(
-          'Unable to delete your virtual account at the provider. Please try again.',
+          'Unable to delete your virtual account at the provider. Please try again later.',
         );
       }
     }
@@ -81,6 +116,7 @@ export class UsersService {
     const anonymizedPhone = `000${crypto.randomInt(10000000, 99999999)}`;
     const replacementPassword = await hashValue(crypto.randomUUID());
 
+    // 4. Atomic Database Updates
     await this.prisma.$transaction(async (tx) => {
       if (user.wallet?.id) {
         await tx.wallet.update({
@@ -89,6 +125,7 @@ export class UsersService {
         });
       }
 
+      // Revoke sessions and codes
       await tx.refreshToken.updateMany({
         where: { userId, revokedAt: null },
         data: { revokedAt: new Date() },
@@ -99,14 +136,11 @@ export class UsersService {
         data: { usedAt: new Date() },
       });
 
-      await tx.savedBankAccount.deleteMany({
-        where: { userId },
-      });
+      // Cleanup PII
+      await tx.savedBankAccount.deleteMany({ where: { userId } });
+      await tx.userProfile.deleteMany({ where: { userId } });
 
-      await tx.userProfile.deleteMany({
-        where: { userId },
-      });
-
+      // Reset KYC but keep the record for audit/uniqueness
       await tx.kYC.updateMany({
         where: { userId },
         data: {
@@ -121,11 +155,11 @@ export class UsersService {
           nextOfKinPhone: null,
           submittedAt: null,
           reviewedAt: null,
-          reviewedBy: null,
           rejectionReason: null,
         },
       });
 
+      // Anonymize the main User record
       await tx.user.update({
         where: { id: userId },
         data: {
@@ -145,17 +179,16 @@ export class UsersService {
           action: 'ACCOUNT_CLOSED',
           entityType: 'USER',
           entityId: userId,
-          reason: dto.reason ?? null,
+          reason: dto.reason ?? 'User requested closure',
           metadata: {
             virtualAccountDeleted: Boolean(existingVa),
+            closedAt: new Date().toISOString(),
           },
         },
       });
     });
 
-    return {
-      message: 'Account closed successfully',
-    };
+    return { message: 'Account closed successfully' };
   }
 
   private async ensureAccountCanBeClosed(userId: string): Promise<void> {
@@ -175,22 +208,20 @@ export class UsersService {
     ]);
 
     if (activeMemberships > 0) {
-      throw new ConflictException(
-        'Account cannot be closed while you have active or pending ROSCA memberships.',
-      );
+      throw new ConflictException('You have active or pending ROSCA memberships.');
     }
 
     if (activeAdminCircles > 0) {
-      throw new ConflictException(
-        'Account cannot be closed while you still administer active or draft ROSCA circles.',
-      );
+      throw new ConflictException('You still administer active or draft ROSCA circles.');
     }
 
     const wallet = await this.walletService.findByUserId(userId);
     if (!wallet) return;
 
-    const [balance, pendingTransactions, lockedBuckets] = await Promise.all([
-      this.walletService.getBalance(wallet.id),
+    // Use getBalance and ensure BigInt safety
+    const balance = await this.walletService.getBalance(wallet.id);
+
+    const [pendingTransactions, lockedBuckets] = await Promise.all([
       this.prisma.transaction.count({
         where: {
           walletId: wallet.id,
@@ -206,21 +237,20 @@ export class UsersService {
     ]);
 
     if (pendingTransactions > 0) {
-      throw new ConflictException(
-        'Account cannot be closed while there are pending transactions.',
-      );
+      throw new ConflictException('You have pending transactions.');
     }
 
-    if (lockedBuckets > 0 || balance.reserved > 0n) {
-      throw new ConflictException(
-        'Account cannot be closed while funds are still reserved.',
-      );
+    // Explicit BigInt comparisons
+    const reserved = BigInt(balance.reserved);
+    const total = BigInt(balance.total);
+    const available = BigInt(balance.available);
+
+    if (lockedBuckets > 0 || reserved > 0n) {
+      throw new ConflictException('Funds are still reserved/locked in your wallet.');
     }
 
-    if (balance.total !== 0n || balance.available !== 0n) {
-      throw new ConflictException(
-        'Wallet balance must be zero before account closure.',
-      );
+    if (total !== 0n || available !== 0n) {
+      throw new ConflictException('Wallet balance must be exactly zero.');
     }
   }
 }

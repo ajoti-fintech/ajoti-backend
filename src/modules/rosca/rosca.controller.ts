@@ -54,6 +54,19 @@ export class RoscaController {
     };
   }
 
+  @Get('my-participations')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Get all ROSCA circles the current user is a member of' })
+  @ApiResponse({ status: 200, type: [RoscaCircleResponseDto] })
+  async getMyParticipations(@CurrentUser('userId') userId: string) {
+    const circles = await this.roscaService.getUserParticipations(userId);
+    return {
+      success: true,
+      message: 'Your active participations retrieved successfully',
+      data: circles.map(formatCircleResponse),
+    };
+  }
+
   @Get(':circleId')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Get detailed view of a specific ROSCA circle' })

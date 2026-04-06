@@ -33,7 +33,6 @@ export class RoscaService {
   // =========================================================================
 
   async createCircle(adminId: string, data: CreateRoscaCircleDto) {
-    // Validate admin exists
     const admin = await this.prisma.user.findUnique({
       where: { id: adminId },
     });
@@ -41,7 +40,6 @@ export class RoscaService {
 
     const contributionAmount = this.parseBigInt(data.contributionAmount, 'Contribution Amount');
 
-    // Create circle in DRAFT status
     return await this.prisma.roscaCircle.create({
       data: {
         ...data,
@@ -49,6 +47,18 @@ export class RoscaService {
         adminId,
         status: CircleStatus.DRAFT,
         filledSlots: 0,
+      },
+      include: {
+        admin: {
+          select: { firstName: true, lastName: true, email: true },
+        },
+        memberships: {
+          include: {
+            user: {
+              select: { firstName: true, lastName: true, email: true },
+            },
+          },
+        },
       },
     });
   }
@@ -305,7 +315,41 @@ export class RoscaService {
         status: status || { in: [CircleStatus.DRAFT, CircleStatus.ACTIVE] },
         name: name ? { contains: name, mode: 'insensitive' } : undefined,
       },
+      include: {
+        admin: {
+          select: { firstName: true, lastName: true, email: true },
+        },
+        _count: {
+          select: { memberships: true },
+        },
+      },
       orderBy: { createdAt: 'desc' },
+    });
+  }
+
+  /**
+   * Get all circles where the user is a member
+   */
+  async getUserParticipations(userId: string) {
+    return await this.prisma.roscaCircle.findMany({
+      where: {
+        memberships: {
+          some: {
+            userId: userId,
+          },
+        },
+      },
+      include: {
+        admin: {
+          select: { firstName: true, lastName: true },
+        },
+        _count: {
+          select: { memberships: true },
+        },
+      },
+      orderBy: {
+        updatedAt: 'desc',
+      },
     });
   }
 
