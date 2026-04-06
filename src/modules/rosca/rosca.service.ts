@@ -535,6 +535,9 @@ export class RoscaService {
         admin: {
           select: { firstName: true, lastName: true, email: true },
         },
+        _count: {
+          select: { memberships: true }, // Adds a 'memberships' count to the result
+        },
       },
       orderBy: { createdAt: 'desc' },
     });

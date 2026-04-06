@@ -130,6 +130,27 @@ export class RoscaAdminController {
     };
   }
 
+  @Get('my-circles')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: '[Admin] Get all ROSCA circles created by the current admin' })
+  @ApiResponse({ status: 200, type: [RoscaCircleResponseDto] })
+  async getMyAdminCircles(
+    @CurrentUser('userId') adminId: string,
+    @Query() query: AdminListCirclesQueryDto,
+  ) {
+    // Force the query to only look for circles belonging to this admin
+    const circles = await this.roscaService.adminListAllCircles({
+      ...query,
+      adminId,
+    });
+
+    return {
+      success: true,
+      message: 'Admin circles retrieved successfully',
+      data: circles.map(formatCircleResponse),
+    };
+  }
+
   @Patch(':circleId/activate')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: '[Admin] Verify and activate a ROSCA circle' })
