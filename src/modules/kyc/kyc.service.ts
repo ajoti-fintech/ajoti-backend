@@ -21,6 +21,7 @@ import { InjectQueue } from '@nestjs/bullmq';
 import { Queue } from 'bullmq';
 import * as path from 'path';
 import { AUTH_EVENTS_QUEUE } from '../auth/auth.events';
+import { VirtualAccountService } from '../virtual-accounts/virtual-account.service';
 
 type PhotoFiles = {
   selfie: Express.Multer.File;
@@ -35,6 +36,7 @@ export class KycService {
     private readonly prisma: PrismaService,
     private readonly identityService: IdentityVerificationService,
     @InjectQueue(AUTH_EVENTS_QUEUE) private readonly authEventsQueue: Queue,
+    private readonly virtualAccountService: VirtualAccountService,
   ) {}
 
   private fileToPublicUrl(file: Express.Multer.File) {
@@ -210,6 +212,10 @@ export class KycService {
         },
       });
     });
+
+    // Internal sync: if user already has a static VA, update BVN at provider.
+    // This is best-effort and does not block KYC completion.
+    await this.virtualAccountService.syncBvnFromKyc(userId, bvn);
 
     return this.mapToResponseDto(updatedKyc);
   }

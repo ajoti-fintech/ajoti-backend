@@ -151,8 +151,12 @@ model Transaction {
 }
 
 enum TransactionType {
-  FUNDING    // Money coming in (Flutterwave → Wallet)
-  WITHDRAWAL // Money going out (Wallet → Bank)
+  FUNDING              // Money coming in (initiated, method not yet finalized)
+  FUNDING_CARD         // Funding completed via card
+  FUNDING_USSD         // Funding completed via USSD
+  FUNDING_BANKTRANSFER // Funding completed via bank transfer
+  FUNDING_ACCOUNT      // Funding completed via direct account debit
+  WITHDRAWAL           // Money going out (Wallet → Bank)
 }
 
 enum TransactionStatus {

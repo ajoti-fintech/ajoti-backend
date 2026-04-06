@@ -6,6 +6,7 @@ import { UsersModule } from '../users/users.module';
 import { IdentityVerificationService } from './identity-verification.service';
 import { PrismaModule } from '@/prisma';
 import { AUTH_EVENTS_QUEUE } from '../auth/auth.events';
+import { VirtualAccountModule } from '../virtual-accounts/virtual-account.module';
 
 @Module({
   imports: [
@@ -14,6 +15,7 @@ import { AUTH_EVENTS_QUEUE } from '../auth/auth.events';
     }),
     UsersModule,
     PrismaModule,
+    VirtualAccountModule,
   ],
   controllers: [KycController],
   providers: [KycService, IdentityVerificationService],

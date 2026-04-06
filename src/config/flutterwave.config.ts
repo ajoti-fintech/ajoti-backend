@@ -17,6 +17,7 @@ export const flutterwaveConfig = registerAs('flutterwave', () => {
     const isLive =
         explicitEnv === 'live' ||
         (explicitEnv !== 'test' && process.env.NODE_ENV === 'production');
+    const bypassRequested = process.env.BYPASS_WEBHOOK_VERIFICATION === 'true';
 
     const secretKey = isLive
         ? process.env.FLW_SECRET_KEY_LIVE
@@ -39,6 +40,12 @@ export const flutterwaveConfig = registerAs('flutterwave', () => {
                 `FLW_WEBHOOK_HASH_${isLive ? 'LIVE' : 'TEST'} are set.`,
             );
         }
+
+        if (bypassRequested) {
+            throw new Error(
+                'BYPASS_WEBHOOK_VERIFICATION must be false in production.',
+            );
+        }
     }
 
     return {
@@ -50,7 +57,8 @@ export const flutterwaveConfig = registerAs('flutterwave', () => {
         baseUrl: process.env.FLW_BASE_URL ?? 'https://api.flutterwave.com/v3',
 
         // Dev safety valves — both must be explicitly false in production
-        bypassWebhookVerification: process.env.BYPASS_WEBHOOK_VERIFICATION === 'true',
+        bypassWebhookVerification:
+            process.env.NODE_ENV === 'production' ? false : bypassRequested,
         mockMode: process.env.MOCK_FLUTTERWAVE === 'true',
 
         // FLW's sandbox BVN — used for VA creation in test mode when user has no KYC BVN

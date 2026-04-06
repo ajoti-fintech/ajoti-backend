@@ -1,3 +1,4 @@
+// src/modules/payout/payout.service.ts
 import { Injectable, BadRequestException, NotFoundException } from '@nestjs/common';
 import * as crypto from 'crypto';
 import {
@@ -17,6 +18,16 @@ import { LedgerService } from '../ledger/ledger.service';
 import { PayoutResult } from './interfaces/payout.interface';
 import { ReversePayoutDto } from './dto/payout.dto';
 
+/**
+ * BUCKET TYPE RULES (from LedgerService):
+ *
+ *   CREDIT / DEBIT  → must use BucketType.MAIN (or omit bucketType)
+ *   RESERVE / RELEASE → must use a non-MAIN bucket (e.g. BucketType.ROSCA)
+ *
+ * Payouts move money between wallets via DEBIT (pool) + CREDIT (recipient).
+ * Both of those are MAIN bucket operations — the ROSCA reservation was already
+ * released by each member's RELEASE entry when they contributed.
+ */
 @Injectable()
 export class PayoutService {
   constructor(
@@ -25,13 +36,17 @@ export class PayoutService {
   ) {}
 
   /**
-   * PROCESS PAYOUT — Rule R1, R5, R7, R10
-   * Moves total pot from Platform Pool to Winner
+   * PROCESS PAYOUT — Rules R1, R5, R7, R10
+   * Moves total pot from Platform Pool wallet to winner's wallet.
+   *
+   * Ledger entries written:
+   *   1. DEBIT  (MAIN) on system pool wallet  — pot leaves the pool
+   *   2. CREDIT (MAIN) on recipient wallet    — pot arrives for winner
    */
   async processPayout(circleId: string, cycleNumber: number): Promise<PayoutResult> {
     return this.prisma.$transaction(
       async (tx) => {
-        // 1. Fetch & validate circle + schedule
+        // ── 1. Fetch & validate circle + schedule ──────────────────────────
         const circle = await tx.roscaCircle.findUnique({
           where: { id: circleId },
           include: {
@@ -54,7 +69,7 @@ export class PayoutService {
           throw new BadRequestException('No recipient assigned to this cycle');
         }
 
-        // 2. Prevent duplicate payout
+        // ── 2. Prevent duplicate payout ────────────────────────────────────
         const existing = await tx.roscaPayout.findFirst({
           where: {
             scheduleId: schedule.id,
@@ -63,11 +78,12 @@ export class PayoutService {
         });
 
         if (existing) {
-          throw new BadRequestException('Payout already processed or in progress for this cycle');
+          throw new BadRequestException(
+            'Payout already processed or in progress for this cycle',
+          );
         }
 
-        // 3. Calculate pot (base contributions + penalties)
-        // If you want to exclude penalties from pot, remove + c.penaltyAmount
+        // ── 3. Calculate pot ───────────────────────────────────────────────
         const contributions = await tx.roscaContribution.findMany({
           where: { circleId, cycleNumber },
         });
@@ -81,29 +97,31 @@ export class PayoutService {
           throw new BadRequestException('No funds available for payout');
         }
 
-        // 4. System & recipient wallets
+        // ── 4. Resolve wallets ─────────────────────────────────────────────
         const systemWallet = await tx.systemWallet.findUnique({
           where: { type: SystemWalletType.PLATFORM_POOL },
         });
-
         if (!systemWallet) throw new Error('Platform pool wallet not configured');
 
         const winnerWallet = await tx.wallet.findUnique({
           where: { userId: recipientId },
         });
-
         if (!winnerWallet) throw new NotFoundException('Recipient wallet not found');
 
         const payoutId = crypto.randomUUID();
         const internalRef = `PAYOUT-${crypto.randomUUID()}`;
 
-        // 5. Ledger movements
+        // ── 5. Ledger movements ────────────────────────────────────────────
+        //
+        // DEBIT the pool wallet — BucketType.MAIN (required by LedgerService)
+        // The pool holds money as plain MAIN balance; there is no ROSCA bucket on it.
+        //
         const poolDebitEntry = await this.ledger.writeEntry(
           {
             walletId: systemWallet.walletId,
             entryType: EntryType.DEBIT,
             movementType: MovementType.TRANSFER,
-            bucketType: BucketType.ROSCA,
+            bucketType: BucketType.MAIN, // ← MUST be MAIN for DEBIT
             amount: totalPot,
             reference: `POOL-DEBIT-${crypto.randomUUID()}`,
             sourceType: LedgerSourceType.ROSCA_CIRCLE,
@@ -113,12 +131,15 @@ export class PayoutService {
           tx,
         );
 
+        // CREDIT the recipient wallet — BucketType.MAIN (required by LedgerService)
+        // Winner receives into their spendable MAIN balance.
+        //
         const recipientCreditEntry = await this.ledger.writeEntry(
           {
             walletId: winnerWallet.id,
             entryType: EntryType.CREDIT,
             movementType: MovementType.TRANSFER,
-            bucketType: BucketType.ROSCA,
+            bucketType: BucketType.MAIN, // ← MUST be MAIN for CREDIT
             amount: totalPot,
             reference: internalRef,
             sourceType: LedgerSourceType.ROSCA_CIRCLE,
@@ -128,7 +149,7 @@ export class PayoutService {
           tx,
         );
 
-        // 6. Create payout record
+        // ── 6. Create payout record ────────────────────────────────────────
         const payout = await tx.roscaPayout.create({
           data: {
             id: payoutId,
@@ -144,13 +165,13 @@ export class PayoutService {
           },
         });
 
-        // 7. Mark schedule as completed
+        // ── 7. Mark schedule completed ─────────────────────────────────────
         await tx.roscaCycleSchedule.update({
           where: { id: schedule.id },
           data: { status: ScheduleStatus.COMPLETED },
         });
 
-        // 8. Finalize if last cycle
+        // ── 8. Finalize circle on last cycle ───────────────────────────────
         const isLastCycle = cycleNumber === circle.durationCycles;
         if (isLastCycle) {
           await this.finalizeCircleAndReleaseCollateral(tx, circleId);
@@ -169,7 +190,10 @@ export class PayoutService {
   }
 
   /**
-   * REVERSAL — Compensating entries when external disbursement fails
+   * REVERSAL — Compensating entries when external disbursement fails.
+   *
+   * Undoes the CREDIT on the recipient and restores the DEBIT on the pool.
+   * Both reversal entries use BucketType.MAIN — same rule as the originals.
    */
   async reversePayout(dto: ReversePayoutDto): Promise<void> {
     await this.prisma.$transaction(async (tx) => {
@@ -186,25 +210,23 @@ export class PayoutService {
       const systemWallet = await tx.systemWallet.findUnique({
         where: { type: SystemWalletType.PLATFORM_POOL },
       });
-
       if (!systemWallet) throw new Error('Platform pool wallet not found');
 
       const recipientWallet = await tx.wallet.findUnique({
         where: { userId: dto.recipientId },
       });
-
       if (!recipientWallet) throw new NotFoundException('Recipient wallet not found');
 
       const amountBigInt = BigInt(dto.amount);
       const reversalId = crypto.randomUUID();
 
-      // Undo credit → debit recipient
+      // Undo credit → DEBIT recipient (BucketType.MAIN — recipient's spendable balance)
       const reversalDebit = await this.ledger.writeEntry(
         {
           walletId: recipientWallet.id,
           entryType: EntryType.DEBIT,
           movementType: MovementType.TRANSFER,
-          bucketType: BucketType.ROSCA,
+          bucketType: BucketType.MAIN, // ← MUST be MAIN for DEBIT
           amount: amountBigInt,
           reference: `REV-DEBIT-${crypto.randomUUID()}`,
           sourceType: LedgerSourceType.REVERSAL,
@@ -218,13 +240,13 @@ export class PayoutService {
         tx,
       );
 
-      // Undo debit → credit pool
+      // Undo debit → CREDIT pool (BucketType.MAIN — pool's balance restored)
       const reversalCredit = await this.ledger.writeEntry(
         {
           walletId: systemWallet.walletId,
           entryType: EntryType.CREDIT,
           movementType: MovementType.TRANSFER,
-          bucketType: BucketType.ROSCA,
+          bucketType: BucketType.MAIN, // ← MUST be MAIN for CREDIT
           amount: amountBigInt,
           reference: `REV-CRED-${crypto.randomUUID()}`,
           sourceType: LedgerSourceType.REVERSAL,
@@ -238,7 +260,7 @@ export class PayoutService {
         tx,
       );
 
-      // Update original payout
+      // Update original payout record
       await tx.roscaPayout.update({
         where: { id: dto.originalPayoutId },
         data: {
@@ -249,13 +271,12 @@ export class PayoutService {
         },
       });
 
-      // Reset schedule for retry
+      // Reset schedule so the payout can be retried
       await tx.roscaCycleSchedule.update({
         where: { id: dto.scheduleId },
         data: { status: ScheduleStatus.UPCOMING },
       });
 
-      // Audit
       await tx.auditLog.create({
         data: {
           actorId: 'SYSTEM',
@@ -271,7 +292,7 @@ export class PayoutService {
   }
 
   /**
-   * Retry a previously failed payout
+   * Retry a previously failed payout.
    */
   async retryPayout(originalPayoutId: string): Promise<PayoutResult> {
     const failedPayout = await this.prisma.roscaPayout.findUnique({
@@ -288,34 +309,36 @@ export class PayoutService {
     return this.processPayout(failedPayout.circleId, failedPayout.schedule.cycleNumber);
   }
 
+  /**
+   * Called on the last cycle to release all member collateral back to MAIN
+   * and mark the circle COMPLETED.
+   *
+   * RELEASE entries correctly use BucketType.ROSCA — LedgerService requires
+   * a non-MAIN bucket for RESERVE/RELEASE operations.
+   */
   private async finalizeCircleAndReleaseCollateral(
     tx: Prisma.TransactionClient,
     circleId: string,
   ): Promise<void> {
     const memberships = await tx.roscaMembership.findMany({
-      where: {
-        circleId,
-        collateralReleased: false,
-      },
+      where: { circleId, collateralReleased: false },
     });
 
     for (const member of memberships) {
       const wallet = await tx.wallet.findUnique({
         where: { userId: member.userId },
       });
-
       if (!wallet) continue;
 
-      const releaseRef = `COLL-REL-${crypto.randomUUID()}`;
-
+      // RELEASE — BucketType.ROSCA is correct here (unlocking a ROSCA reservation)
       await this.ledger.writeEntry(
         {
           walletId: wallet.id,
           entryType: EntryType.RELEASE,
           movementType: MovementType.TRANSFER,
-          bucketType: BucketType.ROSCA,
+          bucketType: BucketType.ROSCA, // ← correct for RELEASE
           amount: member.collateralAmount,
-          reference: releaseRef,
+          reference: `COLL-REL-${crypto.randomUUID()}`,
           sourceType: LedgerSourceType.COLLATERAL_RELEASE,
           sourceId: member.id,
           metadata: { circleId, reason: 'CIRCLE_COMPLETED' },
@@ -352,7 +375,7 @@ export class PayoutService {
   }
 
   /**
-   * Get payout history for a circle
+   * Get payout history for a circle.
    */
   async getPayoutHistory(circleId: string) {
     return this.prisma.roscaPayout.findMany({
@@ -370,7 +393,7 @@ export class PayoutService {
   }
 
   /**
-   * Find payouts that are due (for cron jobs)
+   * Find payouts that are due (for cron jobs).
    */
   async findDuePayouts() {
     const now = new Date();
@@ -392,7 +415,7 @@ export class PayoutService {
   }
 
   /**
-   * Log payout failure for audit
+   * Log payout failure for audit.
    */
   async logPayoutFailure(scheduleId: string, error: Error) {
     await this.prisma.auditLog.create({

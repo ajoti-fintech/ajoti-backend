@@ -1,6 +1,7 @@
 # Dependencies
 node_modules/
 # pnpm-lock.yaml
+tmp-agent-nestjs-skills
 
 # Build output
 dist/
@@ -45,4 +46,13 @@ tmp/
 temp/
 
 /generated/prisma
+outputs/
+
+# Project-local docs/artifacts
+CBN issues Baseline Standards for Automated Anti-Money Laundering Solution.pdf
+nextimpl.md
+architecturemap.md
+desktop.ini
+.tmp-agent-nestjs-skills/
+
 docker/docker-compose.hybrid.yml

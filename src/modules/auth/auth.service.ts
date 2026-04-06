@@ -158,7 +158,7 @@ export class AuthService {
       },
     );
 
-    return { message: 'Registered, OTP sent to mail', userId: user.id };
+    return { message: 'Registered, OTP sent to mail', userEmail: user.email };
   }
 
   async registerAdmin(registerDto: RegisterDto) {
