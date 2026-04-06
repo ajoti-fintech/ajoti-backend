@@ -17,6 +17,7 @@ import {
   AdminListCirclesQueryDto,
   CreateRoscaCircleDto,
   ListCirclesQueryDto,
+  UpdateCircleDto,
 } from './dto/rosca.dto';
 import { PayoutSorter } from './payout-sorter.util';
 
@@ -38,14 +39,7 @@ export class RoscaService {
     });
     if (!admin) throw new NotFoundException('Admin not found');
 
-    let contributionAmount: bigint;
-
-    try {
-      contributionAmount = BigInt(data.contributionAmount);
-      if (contributionAmount <= 0n) throw new Error();
-    } catch {
-      throw new BadRequestException('contributionAmount must be a positive integer string');
-    }
+    const contributionAmount = this.parseBigInt(data.contributionAmount, 'Contribution Amount');
 
     // Create circle in DRAFT status
     return await this.prisma.roscaCircle.create({
@@ -65,8 +59,10 @@ export class RoscaService {
    */
   async activateCircle(circleId: string, startDate: Date) {
     const now = new Date();
-    if (startDate < now) {
-      throw new BadRequestException('Start date cannot be in the past');
+    const bufferTime = 30 * 60 * 1000; // 30 minutes in milliseconds
+
+    if (startDate.getTime() < now.getTime() - bufferTime) {
+      throw new BadRequestException('Start date cannot be in 30 minutes');
     }
 
     return await this.prisma.$transaction(
@@ -83,6 +79,16 @@ export class RoscaService {
         }
 
         const finalCycleCount = circle._count.memberships;
+
+        const actualMemberCount = await tx.roscaMembership.count({
+          where: { circleId, status: MembershipStatus.ACTIVE },
+        });
+
+        if (circle.filledSlots !== actualMemberCount) {
+          throw new BadRequestException(
+            `Data integrity error: Circle claims ${circle.filledSlots} slots filled, but found ${actualMemberCount} active memberships.`,
+          );
+        }
 
         // Update status and start date
         const updated = await tx.roscaCircle.update({
@@ -157,21 +163,23 @@ export class RoscaService {
       }
     }
 
-    // 2. Rank members: Trust Score (Desc), then Joined Date (Asc)
     const sortedMembers = PayoutSorter.sort(memberships, circle.payoutLogic);
 
-    for (let i = 0; i < sortedMembers.length; i++) {
-      await tx.roscaMembership.update({
-        where: { id: sortedMembers[i].id },
-        data: { payoutPosition: i + 1 },
-      });
-    }
+    await Promise.all(
+      sortedMembers.map((member, index) =>
+        tx.roscaMembership.update({
+          where: { id: member.id },
+          data: { payoutPosition: index + 1 },
+        }),
+      ),
+    );
+
     const schedules = [];
     let currentDate = new Date(startDate);
 
     for (let i = 1; i <= circle.durationCycles; i++) {
-      // Contribution deadline = start date + (frequency * (i-1))
-      const contributionDeadline = this.addFrequency(currentDate, circle.frequency);
+      const contributionDeadline = new Date(currentDate);
+      currentDate = this.addFrequency(currentDate, circle.frequency);
 
       // Payout date = contribution deadline + 3 days
       const payoutDate = new Date(contributionDeadline);
@@ -219,9 +227,16 @@ export class RoscaService {
       if (circle.status !== CircleStatus.DRAFT) {
         throw new BadRequestException('Cannot modify payout logic after the circle has started');
       }
+      const newLogic = dto.payoutLogic || circle.payoutLogic;
 
-      if (circle.payoutLogic !== PayoutLogic.ADMIN_ASSIGNED) {
-        throw new BadRequestException('This fucntion only runs if payout logic is admin assigned');
+      if (
+        newLogic !== PayoutLogic.ADMIN_ASSIGNED &&
+        dto.assignments &&
+        dto.assignments.length > 0
+      ) {
+        throw new BadRequestException(
+          'Manual assignments can only be saved when the payout logic is set to ADMIN_ASSIGNED',
+        );
       }
 
       // 1. Update the Strategy if provided
@@ -234,12 +249,14 @@ export class RoscaService {
 
       // 2. Update specific positions if provided (usually for ADMIN_ASSIGNED)
       if (dto.assignments && dto.assignments.length > 0) {
-        for (const { userId, position } of dto.assignments) {
-          await tx.roscaMembership.update({
-            where: { circleId_userId: { circleId, userId } },
-            data: { payoutPosition: position },
-          });
-        }
+        await Promise.all(
+          dto.assignments.map((asn) =>
+            tx.roscaMembership.update({
+              where: { circleId_userId: { circleId, userId: asn.userId } },
+              data: { payoutPosition: asn.position },
+            }),
+          ),
+        );
       }
 
       return { success: true, message: 'Payout configuration updated successfully' };
@@ -293,35 +310,33 @@ export class RoscaService {
   }
 
   /**
-   * Get specific circle details
+   * Get comprehensive group details and rules (Group View)
    */
   async getCircle(circleId: string, userId: string) {
     const circle = await this.prisma.roscaCircle.findUnique({
       where: { id: circleId },
       include: {
-        // 1. Include Admin/Creator info
-        creator: {
+        admin: {
           select: {
             firstName: true,
             lastName: true,
             email: true,
           },
         },
-        // 2. Include all members with names and payout positions
         memberships: {
           include: {
             user: {
               select: {
                 firstName: true,
                 lastName: true,
+                // We keep trust stats internal, but could expose a 'rating' here
               },
             },
           },
           orderBy: {
-            payoutPosition: 'asc', // Ensures positions are ordered
+            payoutPosition: 'asc',
           },
         },
-        // 3. Keep your existing count and specific user check
         _count: {
           select: { memberships: true },
         },
@@ -330,13 +345,162 @@ export class RoscaService {
 
     if (!circle) throw new NotFoundException('Circle not found');
 
-    // Logic to identify if the requesting user is a member
-    const isMember = circle.memberships.some((m) => m.userId === userId);
+    // 1. Calculate Derived Financials
+    const totalPot =
+      circle.contributionAmount * this.parseBigInt(circle.maxSlots, 'circle.maxSlots');
+
+    // 2. Calculate Collateral Requirement (for the UI to show 'Cost to Join')
+    const requiredCollateral = this.calculateCollateral(
+      circle.contributionAmount,
+      circle.collateralPercentage,
+    );
+
+    // 3. Find Requesting User's Relationship to the Group
+    const userMembership = circle.memberships.find((m) => m.userId === userId);
 
     return {
-      ...circle,
-      isRequestingUserMember: isMember,
+      // Core Rules
+      id: circle.id,
+      name: circle.name,
+      description: circle.description,
+      status: circle.status,
+      visibility: circle.visibility,
+
+      // Financial Rules
+      contributionAmount: circle.contributionAmount.toString(), // String for Frontend JSON
+      totalPot: totalPot.toString(),
+      frequency: circle.frequency,
+      durationCycles: circle.durationCycles,
+
+      // Trust Rules
+      collateralPercentage: circle.collateralPercentage,
+      requiredCollateral: requiredCollateral.toString(),
+      payoutLogic: circle.payoutLogic,
+
+      // Slot Stats
+      maxSlots: circle.maxSlots,
+      filledSlots: circle.filledSlots,
+      availableSlots: circle.maxSlots - circle.filledSlots,
+
+      // Admin & Members
+      admin: circle.admin,
+      members: circle.memberships.map((m) => ({
+        userId: m.userId,
+        name: `${m.user.firstName} ${m.user.lastName}`,
+        status: m.status,
+        position: m.payoutPosition,
+        joinedAt: m.joinedAt,
+      })),
+
+      // User-Specific Context
+      isRequestingUserAdmin: circle.adminId === userId,
+      userMembershipStatus: userMembership?.status || null, // PENDING, ACTIVE, or null (not a member)
+      userPayoutPosition: userMembership?.payoutPosition || null,
     };
+  }
+
+  async leaveCircle(circleId: string, userId: string) {
+    return await this.prisma.$transaction(
+      async (tx) => {
+        // 1. Fetch circle and check status
+        const circle = await tx.roscaCircle.findUnique({
+          where: { id: circleId },
+        });
+
+        if (!circle) throw new NotFoundException('Circle not found');
+
+        // Members can only leave while the circle is in DRAFT or PENDING.
+        // Once ACTIVE, they are legally bound to the cycle.
+        if (circle.status !== CircleStatus.DRAFT) {
+          throw new BadRequestException('Cannot leave a circle that has already started');
+        }
+
+        // 2. Find the membership to get the collateral amount
+        const membership = await tx.roscaMembership.findUnique({
+          where: { circleId_userId: { circleId, userId } },
+        });
+
+        if (!membership) throw new NotFoundException('You are not a member of this circle');
+
+        // 3. RELEASE the reserved collateral in the Ledger
+        const wallet = await tx.wallet.findUnique({ where: { userId } });
+        if (!wallet) throw new NotFoundException('Wallet not found');
+
+        const releaseRef = `COLL-REL-${crypto.randomUUID()}`;
+
+        await this.ledger.writeEntry(
+          {
+            walletId: wallet.id,
+            entryType: EntryType.RELEASE, // Inverse of RESERVE
+            movementType: MovementType.TRANSFER,
+            bucketType: BucketType.ROSCA,
+            amount: membership.collateralAmount,
+            reference: releaseRef,
+            sourceType: LedgerSourceType.COLLATERAL_RESERVE,
+            sourceId: membership.id,
+            metadata: { circleId, action: 'LEAVE_GROUP' },
+          },
+          tx,
+        );
+
+        // 4. Remove membership and update filled slots
+        await tx.roscaMembership.delete({
+          where: { id: membership.id },
+        });
+
+        // Only decrement if the member was already APPROVED
+        if (membership.status === MembershipStatus.ACTIVE) {
+          await tx.roscaCircle.update({
+            where: { id: circleId },
+            data: { filledSlots: { decrement: 1 } },
+          });
+        }
+
+        const finalCircle = await tx.roscaCircle.findUnique({ where: { id: circleId } });
+        if (finalCircle!.filledSlots < 0) {
+          throw new Error('Inconsistent state: filledSlots cannot be negative');
+        }
+
+        return { success: true, message: 'Successfully left the circle and collateral released' };
+      },
+      {
+        isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
+      },
+    );
+  }
+
+  async updateCircle(circleId: string, userId: string, updateDto: UpdateCircleDto) {
+    // 1. Find the circle and ensure the requester is the ADMIN
+    const circle = await this.prisma.roscaCircle.findFirst({
+      where: { id: circleId, adminId: userId },
+    });
+
+    if (!circle) throw new NotFoundException('Circle not found or not authorized');
+
+    // 2. Logic Check: Only allow edits in DRAFT or PENDING (before it's "Live")
+    // Note: You had ACTIVE here, but usually, you lock financial rules once it's live.
+    if (circle.status !== CircleStatus.DRAFT) {
+      throw new BadRequestException('Cannot edit a circle once the cycle has officially started');
+    }
+    if (updateDto.maxSlots && updateDto.maxSlots < circle.filledSlots) {
+      throw new BadRequestException('New slot limit cannot be less than current members');
+    }
+
+    // 3. Destructure to handle the BigInt conversion
+    const { contributionAmount, ...rest } = updateDto;
+
+    // 4. Update the record
+    return this.prisma.roscaCircle.update({
+      where: { id: circleId },
+      data: {
+        ...rest,
+        // Manually convert the string from the DTO to a BigInt for Prisma
+        ...(contributionAmount && {
+          contributionAmount: this.parseBigInt(contributionAmount, 'contributionAmount'),
+        }),
+      },
+      include: { admin: true }, // Ensures the return matches your RoscaCircleResponseDto
+    });
   }
 
   /**
@@ -498,5 +662,15 @@ export class RoscaService {
 
   private calculateCollateral(contributionAmount: bigint, percentage: number): bigint {
     return BigInt(Math.floor(Number(contributionAmount) * (percentage / 100)));
+  }
+
+  private parseBigInt(value: number | string, fieldName: string): bigint {
+    try {
+      const amount = BigInt(value);
+      if (amount <= 0n) throw new Error();
+      return amount;
+    } catch {
+      throw new BadRequestException(`${fieldName} must be a valid positive integer string (Kobo)`);
+    }
   }
 }

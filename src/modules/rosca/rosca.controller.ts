@@ -10,6 +10,7 @@ import {
   UseGuards,
   HttpCode,
   HttpStatus,
+  Delete,
 } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiResponse, ApiBearerAuth } from '@nestjs/swagger';
 import { RoscaService } from './rosca.service';
@@ -29,6 +30,7 @@ import {
   RoscaCycleScheduleResponseDto,
   formatScheduleResponse,
   UpdatePayoutConfigDto,
+  UpdateCircleDto,
 } from './dto/rosca.dto';
 import { Roles } from '@/common/decorators/roles.decorator';
 
@@ -90,6 +92,17 @@ export class RoscaController {
       data: schedules.map(formatScheduleResponse),
     };
   }
+
+  @Delete(':circleId/leave')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Leave a circle (before activation)' })
+  async leaveCircle(@Param('circleId') circleId: string, @CurrentUser('userId') userId: string) {
+    const result = await this.roscaService.leaveCircle(circleId, userId);
+    return {
+      success: true,
+      message: result.message,
+    };
+  }
 }
 
 // ────────────────────────────────────────────────
@@ -146,6 +159,23 @@ export class RoscaAdminController {
     };
   }
 
+  @Patch(':circleId')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: '[Admin] Update circle configuration (DRAFT only)' })
+  @ApiResponse({ status: 200, type: RoscaCircleResponseDto })
+  async updateCircle(
+    @Param('circleId') circleId: string,
+    @CurrentUser('userId') userId: string,
+    @Body() updateDto: UpdateCircleDto, // Use UpdateCircleDto here
+  ) {
+    const circle = await this.roscaService.updateCircle(circleId, userId, updateDto);
+    return {
+      success: true,
+      message: 'Circle updated successfully',
+      data: formatCircleResponse(circle),
+    };
+  }
+
   @Patch(':circleId/payout-config')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: '[Admin] Update payout logic or assign member positions' })
@@ -156,6 +186,19 @@ export class RoscaAdminController {
   ) {
     return await this.roscaService.updatePayoutConfiguration(circleId, adminId, dto);
   }
+}
+
+// ────────────────────────────────────────────────
+// SUPER ADMIN CONTROLLER - Explicitly Exported
+// ────────────────────────────────────────────────
+
+@ApiTags('ROSCA Super Admin')
+@Controller('superadmin/rosca')
+@UseGuards(JwtAuthGuard, RolesGuard)
+@Roles('SUPERADMIN')
+@ApiBearerAuth('access-token')
+export class RoscaSuperAdminController {
+  constructor(private readonly roscaService: RoscaService) {}
 
   @Get('all')
   @HttpCode(HttpStatus.OK)

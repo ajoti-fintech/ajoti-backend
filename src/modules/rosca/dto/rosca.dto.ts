@@ -15,7 +15,7 @@ import {
   IsArray,
   ValidateNested,
 } from 'class-validator';
-import { ApiProperty } from '@nestjs/swagger';
+import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import {
   CircleStatus,
   MembershipStatus,
@@ -37,7 +37,7 @@ export function IsPositiveIntegerString(validationOptions?: ValidationOptions) {
       propertyName: propertyName,
       options: validationOptions,
       validator: {
-        validate(value: any) {
+        validate(value: unknown) {
           if (typeof value !== 'string') return false;
           if (!/^\d+$/.test(value)) return false;
           if (value.startsWith('0') && value.length > 1) return false;
@@ -134,6 +134,48 @@ export class ListCirclesQueryDto {
   name?: string;
 }
 
+export class UpdateCircleDto {
+  @ApiPropertyOptional({ example: 'Updated Savings Group' })
+  @IsString()
+  @IsOptional()
+  name?: string;
+
+  @ApiPropertyOptional({ example: 'Saving for the new year' })
+  @IsString()
+  @IsOptional()
+  description?: string;
+
+  @ApiPropertyOptional({ example: '10000', description: 'in kobo' })
+  @IsString()
+  @IsOptional()
+  @IsPositiveIntegerString()
+  contributionAmount?: string;
+
+  @ApiPropertyOptional({ example: 12 })
+  @IsInt()
+  @Min(2)
+  @Max(50)
+  @IsOptional()
+  maxSlots?: number;
+
+  @ApiPropertyOptional({ example: '2026-06-01T00:00:00Z' })
+  @IsDateString()
+  @IsOptional()
+  startDate?: string;
+
+  @ApiPropertyOptional({ example: 5.0, description: 'Collateral %' })
+  @IsNumber()
+  @Min(0)
+  @Max(100)
+  @IsOptional()
+  collateralPercentage?: number;
+
+  @ApiPropertyOptional({ enum: PayoutLogic })
+  @IsEnum(PayoutLogic)
+  @IsOptional()
+  payoutLogic?: PayoutLogic;
+}
+
 export class AdminListCirclesQueryDto {
   @IsOptional()
   @IsEnum(CircleStatus)
@@ -148,6 +190,17 @@ export class AdminListCirclesQueryDto {
 // RESPONSE DTOs
 // ────────────────────────────────────────────────
 
+export class AdminResponseDto {
+  @ApiProperty({ example: 'Jason' })
+  firstName: string;
+
+  @ApiProperty({ example: 'Maxim' })
+  lastName: string;
+
+  @ApiProperty({ example: 'admin@ajoti.com' })
+  email: string;
+}
+
 export class RoscaCircleResponseDto {
   @ApiProperty() id!: string;
   @ApiProperty() name!: string;
@@ -157,8 +210,16 @@ export class RoscaCircleResponseDto {
   @ApiProperty() filledSlots!: number;
   @ApiProperty() maxSlots!: number;
   @ApiProperty({ enum: CircleStatus }) status!: CircleStatus;
-  @ApiProperty({ required: false }) startDate?: Date | null;
+  @ApiProperty({
+    example: '2026-05-01T10:00:00Z',
+    description: 'The start date of the ROSCA circle',
+    type: String,
+    required: false,
+  })
+  startDate?: Date | null;
   @ApiProperty() collateralPercentage!: number;
+  @ApiProperty({ type: AdminResponseDto })
+  admin!: AdminResponseDto;
 }
 
 export class RoscaMembershipResponseDto {
@@ -218,6 +279,11 @@ export function formatCircleResponse(circle: any): RoscaCircleResponseDto {
     status: circle.status,
     startDate: circle.startDate,
     collateralPercentage: circle.collateralPercentage,
+    admin: {
+      firstName: circle.admin.firstName,
+      lastName: circle.admin.lastName,
+      email: circle.admin.email,
+    },
   };
 }
 
