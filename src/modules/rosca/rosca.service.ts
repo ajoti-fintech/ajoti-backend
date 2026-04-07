@@ -673,6 +673,57 @@ export class RoscaService {
     });
   }
 
+  async rejectMember(circleId: string, adminId: string, userId: string) {
+    return await this.prisma.$transaction(
+      async (tx) => {
+        const circle = await tx.roscaCircle.findUnique({ where: { id: circleId } });
+        if (!circle) throw new NotFoundException('Circle not found');
+
+        if (circle.adminId !== adminId) {
+          throw new BadRequestException('Only circle admin can reject members');
+        }
+
+        const membership = await tx.roscaMembership.findUnique({
+          where: { circleId_userId: { circleId, userId } },
+        });
+
+        if (!membership) throw new NotFoundException('Membership not found');
+
+        if (membership.status !== MembershipStatus.PENDING) {
+          throw new BadRequestException('Only pending memberships can be rejected');
+        }
+
+        // Release reserved collateral back to user's wallet
+        if (membership.collateralAmount > 0n) {
+          const wallet = await tx.wallet.findUnique({ where: { userId } });
+          if (!wallet) throw new NotFoundException('Wallet not found');
+
+          const releaseRef = `COLL-REL-${crypto.randomUUID()}`;
+          await this.ledger.writeEntry(
+            {
+              walletId: wallet.id,
+              entryType: EntryType.RELEASE,
+              movementType: MovementType.TRANSFER,
+              bucketType: BucketType.ROSCA,
+              amount: membership.collateralAmount,
+              reference: releaseRef,
+              sourceType: LedgerSourceType.COLLATERAL_RESERVE,
+              sourceId: membership.id,
+              metadata: { circleId, action: 'MEMBER_REJECTED' },
+            },
+            tx,
+          );
+        }
+
+        return await tx.roscaMembership.update({
+          where: { circleId_userId: { circleId, userId } },
+          data: { status: MembershipStatus.REJECTED },
+        });
+      },
+      { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
+    );
+  }
+
   // =========================================================================
   // UTILITIES
   // =========================================================================

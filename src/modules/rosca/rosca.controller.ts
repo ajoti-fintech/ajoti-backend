@@ -209,6 +209,22 @@ export class RoscaAdminController {
     };
   }
 
+  @Patch(':circleId/members/:userId/reject')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Reject a member and release their collateral (Circle Admin only)' })
+  async rejectMember(
+    @Param('circleId') circleId: string,
+    @Param('userId') userId: string,
+    @CurrentUser('userId') adminId: string,
+  ) {
+    const membership = await this.roscaService.rejectMember(circleId, adminId, userId);
+    return {
+      success: true,
+      message: 'Member rejected and collateral released',
+      data: formatMembershipResponse(membership),
+    };
+  }
+
   @Patch(':circleId')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: '[Admin] Update circle configuration (DRAFT only)' })
