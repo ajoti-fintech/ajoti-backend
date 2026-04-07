@@ -4,6 +4,7 @@ import * as crypto from 'crypto';
 import { InjectQueue } from '@nestjs/bullmq';
 import { Queue } from 'bullmq';
 import { AUTH_EVENTS_QUEUE, AuthJobName } from '../auth/auth.events';
+import { LoanService } from '../loans/loans.service';
 import {
   Prisma,
   EntryType,
@@ -38,6 +39,7 @@ export class PayoutService {
   constructor(
     private prisma: PrismaService,
     private ledger: LedgerService,
+    private loanService: LoanService,
     @InjectQueue(AUTH_EVENTS_QUEUE) private readonly authEventsQueue: Queue,
   ) {}
 
@@ -117,6 +119,14 @@ export class PayoutService {
         const payoutId = crypto.randomUUID();
         const internalRef = `PAYOUT-${crypto.randomUUID()}`;
 
+        // ── 4b. Loan deduction — net out any active loan for this recipient ─
+        const { netPayout, loanRepaid } = await this.loanService.processLoanRepaymentInTx(
+          recipientId,
+          circleId,
+          totalPot,
+          tx,
+        );
+
         // ── 5. Ledger movements ────────────────────────────────────────────
         //
         // DEBIT the pool wallet — BucketType.MAIN (required by LedgerService)
@@ -138,7 +148,7 @@ export class PayoutService {
         );
 
         // CREDIT the recipient wallet — BucketType.MAIN (required by LedgerService)
-        // Winner receives into their spendable MAIN balance.
+        // Winner receives netPayout (totalPot minus any loan deduction + company fee).
         //
         const recipientCreditEntry = await this.ledger.writeEntry(
           {
@@ -146,11 +156,19 @@ export class PayoutService {
             entryType: EntryType.CREDIT,
             movementType: MovementType.TRANSFER,
             bucketType: BucketType.MAIN, // ← MUST be MAIN for CREDIT
-            amount: totalPot,
+            amount: netPayout,
             reference: internalRef,
             sourceType: LedgerSourceType.ROSCA_CIRCLE,
             sourceId: payoutId,
-            metadata: { circleId, cycleNumber },
+            metadata: {
+              circleId,
+              cycleNumber,
+              ...(loanRepaid && {
+                loanRepaid: true,
+                grossPayout: totalPot.toString(),
+                netPayout: netPayout.toString(),
+              }),
+            },
           },
           tx,
         );
@@ -162,7 +180,7 @@ export class PayoutService {
             circleId,
             scheduleId: schedule.id,
             recipientId,
-            amount: totalPot,
+            amount: netPayout, // net amount the recipient actually received
             status: PayoutStatus.COMPLETED,
             internalReference: internalRef,
             poolDebitId: poolDebitEntry.id,

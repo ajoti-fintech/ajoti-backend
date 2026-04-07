@@ -91,6 +91,7 @@ enum LedgerSourceType {
   ADMIN_ADJUSTMENT   // Manual correction
   REVERSAL           // Compensating entry for failure
   SYSTEM             // Automated internal jobs
+  LOAN               // Loan disbursement advance
 }
 
 enum BucketType {
@@ -287,6 +288,7 @@ model RoscaCircle {
   schedules     RoscaCycleSchedule[]
   contributions RoscaContribution[]
   payouts       RoscaPayout[]
+  loans         Loan[]
 
   @@map("rosca_circles")
 }
@@ -524,6 +526,60 @@ model AuditLog {
 }
 
 // ============================================================================
+// CREDIT SCORE & LOANS
+// ============================================================================
+
+// 9. CREDIT SCORES — Cached composite score per user
+model CreditScore {
+  id     String @id @default(uuid())
+  userId String @unique @map("user_id")
+  user   User   @relation(fields: [userId], references: [id])
+
+  externalScore     Int @default(575) @map("external_score")      // 300–850 from bureau
+  trustDisplayScore Int @default(575) @map("trust_display_score") // 300–850 from ATI
+  finalScore        Int @default(575) @map("final_score")         // weighted composite
+
+  lastUpdated DateTime @default(now()) @map("last_updated")
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  @@map("credit_scores")
+}
+
+enum LoanStatus {
+  ACTIVE    // Disbursed, awaiting repayment via payout
+  REPAID    // Deducted from payout automatically
+  DEFAULTED // Circle collapsed or user exited with unpaid loan
+  CANCELLED // Cancelled before disbursement
+}
+
+// 10. LOANS — Advance on expected ROSCA payout
+model Loan {
+  id       String      @id @default(uuid())
+  userId   String      @map("user_id")
+  user     User        @relation(fields: [userId], references: [id])
+  circleId String      @map("circle_id")
+  circle   RoscaCircle @relation(fields: [circleId], references: [id])
+
+  // Amounts in kobo
+  payoutAmount BigInt @map("payout_amount") // estimated full payout at application time
+  loanAmount   BigInt @map("loan_amount")   // disbursed to user (payout × allowedPercent)
+  companyFee   BigInt @map("company_fee")   // 10% of payoutAmount retained at payout time
+  finalPayout  BigInt @map("final_payout")  // payoutAmount - loanAmount - companyFee
+
+  creditScoreUsed Int @map("credit_score_used") // snapshot of finalScore at application time
+  allowedPercent  Int @map("allowed_percent")   // tier percentage (20/30/40/45/50)
+
+  status LoanStatus @default(ACTIVE)
+
+  createdAt DateTime  @default(now()) @map("created_at")
+  repaidAt  DateTime? @map("repaid_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+
+  @@map("loans")
+}
+
+// ============================================================================
 // USER & AUTH MODELS
 // ============================================================================
 
@@ -607,6 +663,8 @@ model User {
   roscaContributions  RoscaContribution[]
   roscaPayouts        RoscaPayout[]
   userTrustStats      UserTrustStats?
+  creditScore         CreditScore?
+  loans               Loan[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt

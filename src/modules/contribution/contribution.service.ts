@@ -212,7 +212,11 @@ export class ContributionService {
         });
 
         // ── 9. Update trust score ──────────────────────────────────────────
-        await this.trustService.updateTrustScore(userId, { type: 'contribution', onTime: !isLate }, tx);
+        await this.trustService.updateTrustScore(
+          userId,
+          { type: 'contribution', onTime: !isLate },
+          tx,
+        );
 
         return contribution;
       },
