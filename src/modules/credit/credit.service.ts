@@ -71,7 +71,9 @@ export class CreditService {
       finalScore = Math.round(externalScore * 0.7 + trustDisplayScore * 0.3);
     } else {
       // Fallback: external API failed — use trust score only
-      this.logger.warn(`External credit unavailable for userId=${userId} — falling back to trust score`);
+      this.logger.warn(
+        `External credit unavailable for userId=${userId} — falling back to trust score`,
+      );
       externalScore = trustDisplayScore;
       finalScore = trustDisplayScore;
     }

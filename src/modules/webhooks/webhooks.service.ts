@@ -126,7 +126,7 @@ export class WebhooksService {
       });
 
       if (va) {
-        const verification = await this.verifyChargeWithProvider(data);
+        const verification = await this.verifyChargeWithProvider(data, undefined, data.tx_ref);
         if (!verification.valid) {
           this.logger.warn(
             `VA verification mismatch for tx_ref=${data.tx_ref}: ${verification.reason}`,
@@ -173,7 +173,7 @@ export class WebhooksService {
     }
 
     // Verify with FLW before crediting (status, tx_ref, currency, amount).
-    const verification = await this.verifyChargeWithProvider(data, transaction.amount);
+    const verification = await this.verifyChargeWithProvider(data, transaction.amount, data.tx_ref);
     if (!verification.valid) {
       this.logger.warn(
         `Transaction verification mismatch for ${data.tx_ref}: ${verification.reason}`,
@@ -524,6 +524,7 @@ export class WebhooksService {
   private async verifyChargeWithProvider(
     data: FlwChargeData,
     expectedAmountKobo?: bigint,
+    expectedTxRef?: string,
   ): Promise<{
     valid: boolean;
     amountKobo: bigint;
@@ -532,7 +533,7 @@ export class WebhooksService {
     chargedAmount: number;
     reason?: string;
   }> {
-    const verifyResult = await this.flw.verifyTransaction(data.id);
+    const verifyResult = await this.flw.verifyTransaction(data.id, expectedTxRef ?? data.tx_ref);
     const verified = verifyResult.data;
 
     if (verified.status !== 'successful') {

@@ -297,19 +297,24 @@ export class FlutterwaveProvider {
    * ALWAYS call this before crediting any wallet.
    * Cross-check: status === 'successful', tx_ref matches ours, currency === 'NGN'.
    */
-  async verifyTransaction(transactionId: number): Promise<FlwVerifyTransactionResponse> {
+  async verifyTransaction(
+    transactionId: number,
+    expectedTxRef?: string,
+  ): Promise<FlwVerifyTransactionResponse> {
     if (this.isMockMode) {
       return {
         status: 'success',
         message: 'Mock verification',
         data: {
           id: transactionId,
-          tx_ref: `MOCK-${transactionId}`,
+          // Echo back the real tx_ref so the mismatch check in WebhooksService passes.
+          tx_ref: expectedTxRef ?? `MOCK-${transactionId}`,
           flw_ref: `FLW-MOCK-${transactionId}`,
           amount: 1000,
           charged_amount: 1000,
           currency: 'NGN',
           status: 'successful',
+          payment_type: 'card',
           customer: { id: 0, name: 'Mock User', email: 'mock@test.com' },
         },
       };
