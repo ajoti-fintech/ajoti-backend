@@ -45,7 +45,7 @@ export class AuthController {
 
   // 3 per 5 minutes
   @Post('register')
-  @Throttle({ default: { ttl: 300_000, limit: 3 } })
+  @Throttle({ default: { ttl: 60000, limit: 5 } })
   @ApiOperation({
     summary: 'Register a new user',
     description: 'Register a new user and send verification OTP',
@@ -59,7 +59,7 @@ export class AuthController {
 
   @Post('verify-email')
   @HttpCode(HttpStatus.OK)
-  @Throttle({ default: { ttl: 600_000, limit: 10 } })
+  @Throttle({ default: { ttl: 60000, limit: 5 } })
   @ApiOperation({ summary: 'Verify email', description: 'Verify email with OTP' })
   @ApiAcceptedResponse({ type: VerifyEmailResponse })
   @ApiBadRequestResponse({ example: 'Invalid' })
@@ -69,7 +69,7 @@ export class AuthController {
 
   @Post('resend-verify-otp')
   @HttpCode(HttpStatus.OK)
-  @Throttle({ default: { ttl: 600_000, limit: 3 } })
+  @Throttle({ default: { ttl: 60000, limit: 5 } })
   @ApiOperation({
     summary: 'Resend verification OTP',
     description: 'Resend verification OTP to email',
@@ -83,7 +83,7 @@ export class AuthController {
 
   @Post('/token')
   @HttpCode(HttpStatus.OK)
-  @Throttle({ default: { ttl: 300_000, limit: 10 } })
+  @Throttle({ default: { ttl: 60000, limit: 5 } })
   @ApiOperation({
     summary: 'Login',
     description: 'Login with email and password and get access and refresh tokens',
@@ -103,7 +103,7 @@ export class AuthController {
   @UseGuards(JwtAuthGuard)
   @Post('logout')
   @HttpCode(HttpStatus.OK)
-  @Throttle({ default: { ttl: 600_000, limit: 5 } })
+  @Throttle({ default: { ttl: 60000, limit: 5 } })
   @ApiOperation({ summary: 'Logout', description: 'Logout and invalidate refresh token' })
   @ApiOkResponse({ description: 'logged out' })
   async logout(@Request() req: AuthRequest, @Body() dto: LogoutDto) {
@@ -113,7 +113,7 @@ export class AuthController {
 
   @Post('forget-password')
   @HttpCode(HttpStatus.OK)
-  @Throttle({ default: { ttl: 600_000, limit: 5 } })
+  @Throttle({ default: { ttl: 60000, limit: 5 } })
   @ApiBody({ type: ForgotPasswordDto })
   @ApiOperation({ summary: 'Forgot password', description: 'Send reset password OTP to email' })
   @ApiOkResponse({ description: 'OTP Sent' })
@@ -123,7 +123,7 @@ export class AuthController {
 
   @Post('resend-reset-otp')
   @HttpCode(HttpStatus.OK)
-  @Throttle({ default: { ttl: 600_000, limit: 3 } })
+  @Throttle({ default: { ttl: 60000, limit: 5 } })
   @ApiOperation({
     summary: 'Resend reset password OTP',
     description: 'Resend reset password OTP to email',
@@ -137,7 +137,7 @@ export class AuthController {
 
   @Post('reset-password')
   @HttpCode(HttpStatus.OK)
-  @Throttle({ default: { ttl: 600_000, limit: 5 } })
+  @Throttle({ default: { ttl: 60000, limit: 5 } })
   @ApiBody({ type: ResetPasswordDto })
   @ApiOperation({ summary: 'Reset password', description: 'Reset password with OTP' })
   @ApiOkResponse({ description: 'Password reset successful' })
@@ -150,7 +150,7 @@ export class AuthController {
   @UseGuards(JwtAuthGuard)
   @Post('change-password')
   @HttpCode(HttpStatus.OK)
-  @Throttle({ default: { ttl: 600_000, limit: 5 } })
+  @Throttle({ default: { ttl: 60000, limit: 5 } })
   @ApiBody({ type: ChangePasswordDto })
   @ApiOperation({
     summary: 'Change password',

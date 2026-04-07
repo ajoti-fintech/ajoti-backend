@@ -16,6 +16,7 @@ build/
 .env.production
 .env.wallet.example
 docker-compose.yml
+ComplainceNextsteps.md
 
 # IDE
 .idea/

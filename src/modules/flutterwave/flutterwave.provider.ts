@@ -525,7 +525,7 @@ export class FlutterwaveProvider {
                     account_number: `990000${Math.floor(Math.random() * 10000)
                         .toString()
                         .padStart(4, '0')}`,
-                    bank_name: 'WEMA BANK',
+                    bank_name: `Mock Bank`,
                     account_name: `${payload.firstname} ${payload.lastname}`,
                     created_at: new Date().toISOString(),
                     expiry_date: 'N/A',

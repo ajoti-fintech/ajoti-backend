@@ -136,7 +136,7 @@ export class WalletController {
       success: true,
       message: 'Status retrieved successfully',
       data: {
-        walletId: wallet.id,
+        walletId: wallet.id,  
         status: wallet.status,
         isActive,
         canWithdraw,

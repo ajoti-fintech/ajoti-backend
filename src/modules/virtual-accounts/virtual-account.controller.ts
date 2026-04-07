@@ -34,7 +34,7 @@ export class VirtualAccountController {
      * Returns the user's dedicated NGN virtual account details.
      * If one doesn't exist yet it is provisioned on the fly (idempotent).
      *
-     * The returned account number (Wema Bank) can receive transfers from any
+     * The returned account number can receive transfers from any
      * Nigerian bank. Flutterwave fires a charge.completed webhook when money
      * arrives, which credits the user's wallet ledger automatically.
      */
@@ -43,7 +43,7 @@ export class VirtualAccountController {
     @ApiOperation({
         summary: 'Get (or create) your dedicated NGN virtual account',
         description:
-            'Returns your Wema Bank virtual account details. ' +
+            'Returns your virtual account details. ' +
             'Send money to this account from any Nigerian bank to fund your wallet. ' +
             'Funds reflect automatically once Flutterwave confirms receipt.',
     })

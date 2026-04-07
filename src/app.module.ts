@@ -47,6 +47,7 @@ const ENV = process.env.NODE_ENV || 'development';
             limit: config.get<number>('THROTTLE_LIMIT', 100),
           },
         ],
+        // storage: new ThrottlerStorageRedisService(redisClient),
       }),
     }),
 
