@@ -1,6 +1,9 @@
 // src/modules/payout/payout.service.ts
-import { Injectable, BadRequestException, NotFoundException } from '@nestjs/common';
+import { Injectable, BadRequestException, NotFoundException, Logger } from '@nestjs/common';
 import * as crypto from 'crypto';
+import { InjectQueue } from '@nestjs/bullmq';
+import { Queue } from 'bullmq';
+import { AUTH_EVENTS_QUEUE, AuthJobName } from '../auth/auth.events';
 import {
   Prisma,
   EntryType,
@@ -30,9 +33,12 @@ import { ReversePayoutDto } from './dto/payout.dto';
  */
 @Injectable()
 export class PayoutService {
+  private readonly logger = new Logger(PayoutService.name);
+
   constructor(
     private prisma: PrismaService,
     private ledger: LedgerService,
+    @InjectQueue(AUTH_EVENTS_QUEUE) private readonly authEventsQueue: Queue,
   ) {}
 
   /**
@@ -44,7 +50,7 @@ export class PayoutService {
    *   2. CREDIT (MAIN) on recipient wallet    — pot arrives for winner
    */
   async processPayout(circleId: string, cycleNumber: number): Promise<PayoutResult> {
-    return this.prisma.$transaction(
+    const result = await this.prisma.$transaction<PayoutResult>(
       async (tx) => {
         // ── 1. Fetch & validate circle + schedule ──────────────────────────
         const circle = await tx.roscaCircle.findUnique({
@@ -187,6 +193,11 @@ export class PayoutService {
       },
       { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
     );
+
+    // Notify the winner AFTER the DB transaction commits.
+    await this.enqueueTransactionEvent(result.recipientId, BigInt(result.amount), result.payoutId);
+
+    return result;
   }
 
   /**
@@ -432,5 +443,41 @@ export class PayoutService {
         },
       },
     });
+  }
+
+  /**
+   * Enqueue a wallet.transaction.completed notification for the payout recipient.
+   * Notification failure must never surface to the caller — payouts are already committed.
+   */
+  private async enqueueTransactionEvent(
+    userId: string,
+    amountKobo: bigint,
+    payoutId: string,
+  ): Promise<void> {
+    try {
+      const user = await this.prisma.user.findUnique({
+        where: { id: userId },
+        select: { email: true, firstName: true, lastName: true },
+      });
+
+      if (!user) return;
+
+      await this.authEventsQueue.add(
+        AuthJobName.WALLET_TRANSACTION_COMPLETED,
+        {
+          userId,
+          email: user.email,
+          fullName: `${user.firstName} ${user.lastName}`,
+          type: 'CREDIT',
+          amount: Number(amountKobo) / 100, // kobo → NGN
+          currency: 'NGN',
+          reference: `PAYOUT-${payoutId}`,
+          timestamp: new Date().toISOString(),
+        },
+        { removeOnComplete: true, attempts: 3 },
+      );
+    } catch (err) {
+      this.logger.error(`Failed to enqueue payout notification for userId=${userId}`, err);
+    }
   }
 }

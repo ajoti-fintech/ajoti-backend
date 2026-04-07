@@ -5,10 +5,12 @@ import { MailErrorMapper } from '@/common/error/mail-error';
 import { BullModule } from '@nestjs/bullmq';
 import { MailQueue, MAIL_QUEUE } from './mail.queue';
 import { MailProcessor } from './mail.processor';
+import { PrismaModule } from '@/prisma';
 
 @Module({
   imports: [
     ConfigModule,
+    PrismaModule,
     BullModule.registerQueue({
       name: MAIL_QUEUE,
     }),

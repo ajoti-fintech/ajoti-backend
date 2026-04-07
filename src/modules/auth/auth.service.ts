@@ -25,7 +25,7 @@ import { StringValue } from 'ms';
 import { resetPasswordOtpTemplate } from '../mail/templates/otp-reset-password';
 import { verificationOtpTemplate } from '../mail/templates/otp-verification';
 import { OtpService } from '../otp/otp.service';
-import { AUTH_EVENTS_QUEUE } from './auth.events';
+import { AUTH_EVENTS_QUEUE, AuthJobName } from './auth.events';
 
 function sha256(input: string) {
   return crypto.createHash('sha256').update(input).digest('hex');
@@ -145,7 +145,7 @@ export class AuthService {
     });
 
     await this.authEventsQueue.add(
-      'user.registered',
+      AuthJobName.USER_REGISTERED,
       {
         userId: user.id,
         email: user.email,
@@ -225,7 +225,7 @@ export class AuthService {
     });
 
     await this.authEventsQueue.add(
-      'user.registered',
+      AuthJobName.USER_REGISTERED,
       {
         userId: user.id,
         email: user.email,
@@ -288,10 +288,11 @@ export class AuthService {
     });
 
     await this.authEventsQueue.add(
-      'email.verified',
+      AuthJobName.EMAIL_VERIFIED,
       {
         userId: user.id,
         email: user.email,
+        fullName: `${user.firstName} ${user.lastName}`,
         timestamp: new Date().toISOString(),
       },
       {
@@ -315,19 +316,6 @@ export class AuthService {
     }
 
     const tokens = await this.issueTokens(user.id, user.role);
-
-    await this.authEventsQueue.add(
-      'user.logged-in',
-      {
-        userId: user.id,
-        email: user.email,
-        timestamp: new Date().toISOString(),
-      },
-      {
-        removeOnComplete: true,
-        attempts: 5,
-      },
-    );
 
     return {
       // message: 'Logged in',
@@ -384,10 +372,11 @@ export class AuthService {
     });
 
     await this.authEventsQueue.add(
-      'auth.password.reset',
+      AuthJobName.PASSWORD_RESET,
       {
         userId: user.id,
         email: user.email,
+        fullName: `${user.firstName} ${user.lastName}`,
         timestamp: new Date().toISOString(),
       },
       {
@@ -420,10 +409,11 @@ export class AuthService {
     });
 
     await this.authEventsQueue.add(
-      'auth.password.changed',
+      AuthJobName.PASSWORD_CHANGED,
       {
         userId: user.id,
         email: user.email,
+        fullName: `${user.firstName} ${user.lastName}`,
         timestamp: new Date().toISOString(),
       },
       {

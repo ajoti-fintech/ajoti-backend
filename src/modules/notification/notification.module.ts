@@ -1,17 +1,20 @@
 import { Module } from '@nestjs/common';
+import { BullModule } from '@nestjs/bullmq';
 import { NotificationService } from './notification.service';
 import { NotificationController } from './notification.controller';
+import { NotificationProcessor } from './notification.processor';
+import { NotificationGateway } from './notification-gateway';
 import { PrismaModule } from '@/prisma';
 import { MailModule } from '../mail/mail.module';
-import { NotificationConsumer } from './notification.consumer';
+import { AUTH_EVENTS_QUEUE } from '../auth/auth.events';
 import { JwtModule } from '@nestjs/jwt';
 import { ConfigModule, ConfigService } from '@nestjs/config';
-import { NotificationGateway } from './notification-gateway';
 
 @Module({
   imports: [
     PrismaModule,
     MailModule,
+    BullModule.registerQueue({ name: AUTH_EVENTS_QUEUE }),
     JwtModule.registerAsync({
       imports: [ConfigModule],
       inject: [ConfigService],
@@ -20,8 +23,8 @@ import { NotificationGateway } from './notification-gateway';
       }),
     }),
   ],
-  providers: [NotificationService, NotificationGateway],
-  controllers: [NotificationConsumer, NotificationController],
+  providers: [NotificationService, NotificationGateway, NotificationProcessor],
+  controllers: [NotificationController],
   exports: [NotificationService],
 })
 export class NotificationModule {}

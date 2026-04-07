@@ -465,14 +465,30 @@ model UserTrustStats {
   userId String @unique @map("user_id")
   user   User   @relation(fields: [userId], references: [id])
 
-  trustScore              Int   @default(50) // 0-100, system calculated
+  trustScore              Int   @default(50) // 0-100, ATI-computed
   completionRate          Float @default(0)  // % of completed cycles
   totalRoscasJoined       Int   @default(0) @map("total_roscas_joined")
   totalRoscasCompleted    Int   @default(0) @map("total_roscas_completed")
+
+  // ATI: Contribution counters (History Behavior component)
   totalOnTimePayments     Int   @default(0) @map("total_on_time_payments")
-  totalLatePayments       Int   @default(0) @map("total_late_payments")
-  totalDefaults           Int   @default(0) @map("total_defaults")
+  totalLatePayments       Int   @default(0) @map("total_late_payments")   // paid but late (×0.5 penalty)
+  totalMissedPayments     Int   @default(0) @map("total_missed_payments") // never paid (×1.5 penalty)
+  totalDefaults           Int   @default(0) @map("total_defaults")        // abandoned cycle (×3 penalty)
+  totalExpectedPayments   Int   @default(0) @map("total_expected_payments")
   consecutiveLatePayments Int   @default(0) @map("consecutive_late_payments")
+
+  // ATI: Recent Behavior component (last cycle only — reset each cycle)
+  onTimePaymentsLastCycle   Int @default(0) @map("on_time_payments_last_cycle")
+  expectedPaymentsLastCycle Int @default(0) @map("expected_payments_last_cycle")
+
+  // ATI: Payout Reliability component (post-payout payments)
+  postPayoutOnTimePayments   Int @default(0) @map("post_payout_on_time_payments")
+  expectedPostPayoutPayments Int @default(0) @map("expected_post_payout_payments")
+
+  // ATI: Peer Trust component
+  averagePeerRating Float @default(0) @map("average_peer_rating")
+  totalPeerRatings  Int   @default(0) @map("total_peer_ratings")
 
   // NO manual override fields
   // NO admin adjustment columns

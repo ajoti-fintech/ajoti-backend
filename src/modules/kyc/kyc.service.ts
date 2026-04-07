@@ -20,7 +20,7 @@ import {
 import { InjectQueue } from '@nestjs/bullmq';
 import { Queue } from 'bullmq';
 import * as path from 'path';
-import { AUTH_EVENTS_QUEUE } from '../auth/auth.events';
+import { AUTH_EVENTS_QUEUE, AuthJobName } from '../auth/auth.events';
 import { VirtualAccountService } from '../virtual-accounts/virtual-account.service';
 
 type PhotoFiles = {
@@ -420,11 +420,13 @@ export class KycService {
     ]);
 
     await this.authEventsQueue.add(
-      'kyc.status.changed',
+      AuthJobName.KYC_STATUS_CHANGED,
       {
         userId,
         email: user?.email,
+        fullName: user ? `${user.firstName} ${user.lastName}` : '',
         status: 'APPROVED',
+        timestamp: new Date().toISOString(),
       },
       {
         attempts: 5,
@@ -474,12 +476,14 @@ export class KycService {
     ]);
 
     await this.authEventsQueue.add(
-      'kyc.status.changed',
+      AuthJobName.KYC_STATUS_CHANGED,
       {
         userId,
         email: user?.email,
+        fullName: user ? `${user.firstName} ${user.lastName}` : '',
         status: 'REJECTED',
         reason: rejectionReason,
+        timestamp: new Date().toISOString(),
       },
       {
         attempts: 5,

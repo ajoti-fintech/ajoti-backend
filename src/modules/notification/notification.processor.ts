@@ -1,6 +1,8 @@
-import { Controller, Logger } from '@nestjs/common';
-import { EventPattern, Payload } from '@nestjs/microservices';
+import { Processor, WorkerHost } from '@nestjs/bullmq';
+import { Job } from 'bullmq';
+import { Logger } from '@nestjs/common';
 import { NotificationService } from './notification.service';
+import { AUTH_EVENTS_QUEUE, AuthJobName } from '../auth/auth.events';
 import {
   EmailVerifiedPayload,
   KycStatusChangedPayload,
@@ -10,23 +12,47 @@ import {
   WalletTransactionPayload,
 } from './notitication.types';
 
-@Controller()
-export class NotificationConsumer {
-  private readonly logger = new Logger(NotificationConsumer.name);
+@Processor(AUTH_EVENTS_QUEUE)
+export class NotificationProcessor extends WorkerHost {
+  private readonly logger = new Logger(NotificationProcessor.name);
 
-  constructor(private readonly notificationService: NotificationService) {}
+  constructor(private readonly notificationService: NotificationService) {
+    super();
+  }
 
-  // ─── Auth Events ──────────────────────────────────────────────────────────
+  async process(job: Job): Promise<void> {
+    switch (job.name) {
+      case AuthJobName.USER_REGISTERED:
+        return this.handleUserRegistered(job.data);
 
-  @EventPattern('auth.user.registered')
-  async handleUserRegistered(@Payload() data: UserRegisteredPayload) {
-    this.logger.log(`Handling auth.user.registered for userId=${data.userId}`);
+      case AuthJobName.EMAIL_VERIFIED:
+        return this.handleEmailVerified(job.data);
 
+      case AuthJobName.PASSWORD_RESET:
+        return this.handlePasswordReset(job.data);
+
+      case AuthJobName.PASSWORD_CHANGED:
+        return this.handlePasswordChanged(job.data);
+
+      case AuthJobName.KYC_STATUS_CHANGED:
+        return this.handleKycStatusChanged(job.data);
+
+      case AuthJobName.WALLET_TRANSACTION_COMPLETED:
+        return this.handleTransactionCompleted(job.data);
+
+      default:
+        // Jobs meant for other processors (e.g. kyc.processor) share this
+        // queue — silently ignore unrecognised names.
+        break;
+    }
+  }
+
+  // ── Handlers ──────────────────────────────────────────────────────────────
+
+  private async handleUserRegistered(data: UserRegisteredPayload) {
+    this.logger.log(`user.registered for userId=${data.userId}`);
     await Promise.all([
-      // Email: welcome email
       this.notificationService.sendWelcomeEmail(data.userId, data.email, data.fullName),
-
-      // In-app: welcome notification
       this.notificationService.createInAppNotification(
         data.userId,
         'Welcome to Ajoti!',
@@ -35,15 +61,10 @@ export class NotificationConsumer {
     ]);
   }
 
-  @EventPattern('auth.email.verified')
-  async handleEmailVerified(@Payload() data: EmailVerifiedPayload) {
-    this.logger.log(`Handling auth.email.verified for userId=${data.userId}`);
-
+  private async handleEmailVerified(data: EmailVerifiedPayload) {
+    this.logger.log(`email.verified for userId=${data.userId}`);
     await Promise.all([
-      // Email: account activated
       this.notificationService.sendAccountActivationEmail(data.userId, data.email, data.fullName),
-
-      // In-app: prompt KYC
       this.notificationService.createInAppNotification(
         data.userId,
         'Email Verified ✅',
@@ -52,10 +73,8 @@ export class NotificationConsumer {
     ]);
   }
 
-  @EventPattern('auth.password.reset')
-  async handlePasswordReset(@Payload() data: PasswordResetPayload) {
-    this.logger.log(`Handling auth.password.reset for userId=${data.userId}`);
-
+  private async handlePasswordReset(data: PasswordResetPayload) {
+    this.logger.log(`auth.password.reset for userId=${data.userId}`);
     await Promise.all([
       this.notificationService.sendPasswordResetConfirmationEmail(
         data.userId,
@@ -70,10 +89,8 @@ export class NotificationConsumer {
     ]);
   }
 
-  @EventPattern('auth.password.changed')
-  async handlePasswordChanged(@Payload() data: PasswordChangedPayload) {
-    this.logger.log(`Handling auth.password.changed for userId=${data.userId}`);
-
+  private async handlePasswordChanged(data: PasswordChangedPayload) {
+    this.logger.log(`auth.password.changed for userId=${data.userId}`);
     await Promise.all([
       this.notificationService.sendPasswordChangedEmail(data.userId, data.email, data.fullName),
       this.notificationService.createInAppNotification(
@@ -84,12 +101,8 @@ export class NotificationConsumer {
     ]);
   }
 
-  // ─── KYC Events ───────────────────────────────────────────────────────────
-
-  @EventPattern('kyc.status.changed')
-  async handleKycStatusChanged(@Payload() data: KycStatusChangedPayload) {
-    this.logger.log(`Handling kyc.status.changed for userId=${data.userId}, status=${data.status}`);
-
+  private async handleKycStatusChanged(data: KycStatusChangedPayload) {
+    this.logger.log(`kyc.status.changed for userId=${data.userId}, status=${data.status}`);
     await Promise.all([
       this.notificationService.sendKycStatusEmail(
         data.userId,
@@ -108,14 +121,8 @@ export class NotificationConsumer {
     ]);
   }
 
-  // ─── Wallet Events ────────────────────────────────────────────────────────
-
-  @EventPattern('wallet.transaction.completed')
-  async handleTransactionCompleted(@Payload() data: WalletTransactionPayload) {
-    this.logger.log(
-      `Handling wallet.transaction.completed for userId=${data.userId}, ref=${data.reference}`,
-    );
-
+  private async handleTransactionCompleted(data: WalletTransactionPayload) {
+    this.logger.log(`wallet.transaction.completed for userId=${data.userId}, ref=${data.reference}`);
     await Promise.all([
       this.notificationService.sendTransactionEmail(
         data.userId,

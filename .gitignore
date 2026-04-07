@@ -56,3 +56,4 @@ desktop.ini
 .tmp-agent-nestjs-skills/
 
 docker/docker-compose.hybrid.yml
+.claude/

@@ -12,6 +12,7 @@ import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { CurrentUser } from '@/common/decorators/current-user.decorator';
 import { UsersService } from './users.service';
 import { DeleteUserAccountDto } from './dto/delete-user.dto';
+import { UserProfileResponseDto } from './dto/user-profile.dto';
 
 @ApiTags('Users')
 @Controller('users')
@@ -23,7 +24,11 @@ export class UsersController {
   @Get('me')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Get current user profile and account status' })
-  @ApiResponse({ status: 200, description: 'User profile retrieved successfully' })
+  @ApiResponse({
+    status: 200,
+    description: 'User profile retrieved successfully',
+    type: UserProfileResponseDto,
+  })
   async getMyProfile(@CurrentUser('userId') userId: string) {
     const user = await this.usersService.findById(userId);
     return {

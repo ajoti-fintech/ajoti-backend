@@ -11,6 +11,8 @@ import {
   TransactionStatus,
   TransactionType,
 } from '@prisma/client';
+import { InjectQueue } from '@nestjs/bullmq';
+import { Queue } from 'bullmq';
 import { PrismaService } from '@/prisma';
 import { FlutterwaveProvider } from '../flutterwave/flutterwave.provider';
 import {
@@ -19,6 +21,7 @@ import {
   FlwChargeData,
   FlwWebhookMetaData,
 } from './dto/flutterwave-webhook.dto';
+import { AUTH_EVENTS_QUEUE, AuthJobName } from '../auth/auth.events';
 
 /**
  * CRITICAL FINANCIAL RULES (from DDD):
@@ -40,6 +43,7 @@ export class WebhooksService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly flw: FlutterwaveProvider,
+    @InjectQueue(AUTH_EVENTS_QUEUE) private readonly authEventsQueue: Queue,
   ) {}
 
   /**
@@ -130,12 +134,20 @@ export class WebhooksService {
           return;
         }
 
-        await this.creditWalletFromVA(
+        const credited = await this.creditWalletFromVA(
           va,
           data,
           verification.amountKobo,
           payload.meta_data,
         );
+        if (credited) {
+          await this.enqueueTransactionEvent(
+            va.userId,
+            'CREDIT',
+            verification.amountKobo,
+            `VA-${data.flw_ref}`,
+          );
+        }
         return;
       }
       // No VA found for this tx_ref — fall through to hosted checkout path.
@@ -228,6 +240,13 @@ export class WebhooksService {
     this.logger.log(
       `Hosted checkout funded: walletId=${transaction.walletId}, amount=${amountKobo} kobo`,
     );
+
+    await this.enqueueTransactionEvent(
+      transaction.wallet.userId,
+      'CREDIT',
+      amountKobo,
+      fundingReference,
+    );
   }
 
   /**
@@ -245,7 +264,7 @@ export class WebhooksService {
     data: FlwChargeData,
     amountKobo: bigint,
     webhookMetaData?: FlwWebhookMetaData,
-  ): Promise<void> {
+  ): Promise<boolean> {
     this.logger.log(
       `VA credit: userId=${va.userId}, flw_ref=${data.flw_ref}, amount=${amountKobo.toString()} kobo`,
     );
@@ -269,7 +288,7 @@ export class WebhooksService {
         this.logger.warn(
           `Duplicate VA ledger entry detected for flw_ref=${data.flw_ref} — skipping`,
         );
-        return;
+        return false;
       }
 
       // Use running total — O(1)
@@ -310,6 +329,8 @@ export class WebhooksService {
     this.logger.log(
       `VA wallet funded: walletId=${va.walletId}, amount=${amountKobo} kobo, flw_ref=${data.flw_ref}`,
     );
+
+    return true;
   }
 
   // ─────────────────────────────────────────────────────────────────────────
@@ -409,6 +430,24 @@ export class WebhooksService {
         );
       }
     });
+
+    // Emit notification AFTER the DB transaction commits.
+    if (isSuccessful) {
+      await this.enqueueTransactionEvent(
+        transaction.wallet.userId,
+        'DEBIT',
+        transaction.amount,
+        transaction.reference,
+      );
+    } else {
+      // Withdrawal failed — funds were returned; notify as a CREDIT refund.
+      await this.enqueueTransactionEvent(
+        transaction.wallet.userId,
+        'CREDIT',
+        transaction.amount,
+        `REVERSAL-${transaction.reference}`,
+      );
+    }
   }
 
   // ─────────────────────────────────────────────────────────────────────────
@@ -621,6 +660,45 @@ export class WebhooksService {
     // transfer.completed — reference is our unique internal ref
     const ref = data.reference ?? data.id;
     return `${payload.event}::${ref}`;
+  }
+
+  /**
+   * Enqueue a wallet.transaction.completed notification event.
+   * Fetches user email + fullName then fires the job on the auth-events queue.
+   * Called AFTER the DB transaction commits to guarantee consistency.
+   */
+  private async enqueueTransactionEvent(
+    userId: string,
+    type: 'CREDIT' | 'DEBIT',
+    amountKobo: bigint,
+    reference: string,
+  ): Promise<void> {
+    try {
+      const user = await this.prisma.user.findUnique({
+        where: { id: userId },
+        select: { email: true, firstName: true, lastName: true },
+      });
+
+      if (!user) return;
+
+      await this.authEventsQueue.add(
+        AuthJobName.WALLET_TRANSACTION_COMPLETED,
+        {
+          userId,
+          email: user.email,
+          fullName: `${user.firstName} ${user.lastName}`,
+          type,
+          amount: Number(amountKobo) / 100, // kobo → NGN
+          currency: 'NGN',
+          reference,
+          timestamp: new Date().toISOString(),
+        },
+        { removeOnComplete: true, attempts: 3 },
+      );
+    } catch (err) {
+      // Notification failure must never roll back a completed financial transaction.
+      this.logger.error(`Failed to enqueue transaction notification for userId=${userId}`, err);
+    }
   }
 
   /**
