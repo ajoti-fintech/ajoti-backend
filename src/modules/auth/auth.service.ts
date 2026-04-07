@@ -57,7 +57,7 @@ export class AuthService {
     });
 
     // 2. Access Token Generation
-    const accessExpires = this.config.get<string>('JWT_ACCESS_EXPIRES_IN') || '30m';
+    const accessExpires = this.config.get<string>('JWT_ACCESS_EXPIRES_IN') || '1h';
     const accessToken = await this.jwt.signAsync(
       { sub: userId, role },
       {
@@ -70,7 +70,7 @@ export class AuthService {
     const refreshRaw = crypto.randomBytes(48).toString('hex');
     const refreshHash = sha256(refreshRaw);
 
-    const refreshExpiresIn = this.config.get<string>('JWT_REFRESH_EXPIRES_IN') || '7d';
+    const refreshExpiresIn = this.config.get<string>('JWT_REFRESH_EXPIRES_IN') || '30d';
     const days = Number(refreshExpiresIn.toLowerCase().replace(/[^0-9]/g, '')) || 7;
     const refreshExpires = new Date(Date.now() + days * 24 * 60 * 60 * 1000);
 

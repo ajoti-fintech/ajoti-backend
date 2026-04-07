@@ -34,6 +34,26 @@ export class FundingController {
     };
   }
 
+  @Get('verify/:reference')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'Verify a funding payment after redirect',
+    description:
+      'Call this immediately when the user lands back from Flutterwave. ' +
+      'Triggers on-demand verification and credits the wallet if payment was successful.',
+  })
+  @ApiResponse({ status: 200, description: 'Payment status: success | pending | failed' })
+  async verifyFunding(
+    @CurrentUser('userId') userId: string,
+    @Param('reference') reference: string,
+  ) {
+    const result = await this.fundingService.verifyFunding(userId, reference);
+    return {
+      success: result.status === 'success',
+      ...result,
+    };
+  }
+
   @Get('methods')
   @ApiOperation({ summary: 'Get list of available funding methods' })
   @ApiResponse({ status: 200, description: 'List of funding methods' })
