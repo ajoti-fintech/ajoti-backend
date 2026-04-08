@@ -102,8 +102,16 @@ export class ContributionService {
           throw new NotFoundException('User wallet not found');
         }
 
-        // ── 4. Penalty logic ───────────────────────────────────────────────
-        const isLate = new Date() > schedule.contributionDeadline;
+        // ── 4. Late / missed logic ─────────────────────────────────────────
+        // Late: contribution arrives after the deadline but before payout (24h window).
+        // Missed: contribution arrives after payout — not accepted.
+        const now = new Date();
+        if (now >= schedule.payoutDate) {
+          throw new BadRequestException(
+            'Contribution window has closed — payout has already occurred for this cycle',
+          );
+        }
+        const isLate = now > schedule.contributionDeadline;
         const penalty = isLate
           ? (circle.contributionAmount * BigInt(Math.round(circle.latePenaltyPercent * 100))) /
             10000n

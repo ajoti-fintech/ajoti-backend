@@ -185,7 +185,7 @@ export class RoscaAdminController {
   @ApiOperation({ summary: '[Admin] Verify and activate a ROSCA circle' })
   @ApiResponse({ status: 200, type: RoscaCircleResponseDto })
   async activateCircle(@Param('circleId') circleId: string, @Body() dto: ActivateCircleDto) {
-    const circle = await this.roscaService.activateCircle(circleId, new Date(dto.startDate));
+    const circle = await this.roscaService.activateCircle(circleId, new Date(dto.initialContributionDeadline));
     return {
       success: true,
       message: 'Circle verified and activated. Schedules generated.',

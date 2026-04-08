@@ -73,13 +73,12 @@ export class RoscaService {
    * ACTIVATE circle → Generate schedules (R5)
    * Called by admin verification OR autoStartOnFull
    */
-  async activateCircle(circleId: string, startDate: Date) {
+  async activateCircle(circleId: string, initialContributionDeadline: Date) {
     const now = new Date();
     const bufferTime = 30 * 60 * 1000; // 30 minutes in milliseconds
 
-    // FIX: corrected error message — the guard rejects dates too far in the past
-    if (startDate.getTime() < now.getTime() - bufferTime) {
-      throw new BadRequestException('Start date must not be more than 30 minutes in the past');
+    if (initialContributionDeadline.getTime() < now.getTime() - bufferTime) {
+      throw new BadRequestException('Initial contribution deadline must not be more than 30 minutes in the past');
     }
 
     return await this.prisma.$transaction(
@@ -110,14 +109,14 @@ export class RoscaService {
           where: { id: circleId },
           data: {
             status: CircleStatus.ACTIVE,
-            startDate,
+            initialContributionDeadline,
             verifiedAt: new Date(),
             currentCycle: 1,
             durationCycles: actualMemberCount,
           },
         });
 
-        await this.generateSchedules(tx, circleId, startDate);
+        await this.generateSchedules(tx, circleId, initialContributionDeadline);
 
         await tx.auditLog.create({
           data: {
@@ -127,7 +126,7 @@ export class RoscaService {
             entityType: 'ROSCA_CIRCLE',
             entityId: circleId,
             before: { status: CircleStatus.DRAFT },
-            after: { status: CircleStatus.ACTIVE, startDate },
+            after: { status: CircleStatus.ACTIVE, initialContributionDeadline },
             metadata: { autoActivation: false },
           },
         });
@@ -144,7 +143,7 @@ export class RoscaService {
    * Schedule Generation Engine — Deterministic (R5)
    * Called only at activation, never manually
    */
-  private async generateSchedules(tx: Prisma.TransactionClient, circleId: string, startDate: Date) {
+  private async generateSchedules(tx: Prisma.TransactionClient, circleId: string, initialContributionDeadline: Date) {
     const circle = await tx.roscaCircle.findUnique({
       where: { id: circleId },
     });
@@ -187,17 +186,16 @@ export class RoscaService {
     );
 
     const schedules = [];
-    let currentDate = new Date(startDate);
+    let currentDate = new Date(initialContributionDeadline);
 
     for (let i = 1; i <= circle.durationCycles; i++) {
-      // FIX: capture the deadline first, then advance currentDate AFTER.
-      // Previously addFrequency was called mid-loop but its result was
-      // immediately overwritten by `currentDate = contributionDeadline`,
-      // causing every cycle to produce the same deadline date.
       const contributionDeadline = new Date(currentDate);
 
+      // Payout occurs 24 hours after the contribution deadline.
+      // Contributions within this 24h window are accepted but marked late.
+      // Contributions after the payout date are considered missed.
       const payoutDate = new Date(contributionDeadline);
-      payoutDate.setDate(payoutDate.getDate() + 3);
+      payoutDate.setTime(payoutDate.getTime() + 24 * 60 * 60 * 1000);
 
       const recipientIndex = (i - 1) % sortedMembers.length;
       const recipientId = sortedMembers[recipientIndex].userId;

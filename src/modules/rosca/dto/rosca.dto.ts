@@ -118,10 +118,13 @@ export class CreateRoscaCircleDto {
 }
 
 export class ActivateCircleDto {
-  @ApiProperty({ example: '2026-03-01T00:00:00Z' })
+  @ApiProperty({
+    example: '2026-03-01T00:00:00Z',
+    description: 'The deadline by which all members must make their first contribution. Payout occurs 24 hours after this.',
+  })
   @IsDateString()
   @IsNotEmpty()
-  startDate!: string;
+  initialContributionDeadline!: string;
 }
 
 export class ListCirclesQueryDto {
@@ -220,11 +223,11 @@ export class RoscaCircleResponseDto {
   @ApiProperty({ enum: CircleStatus }) status!: CircleStatus;
   @ApiProperty({
     example: '2026-05-01T10:00:00Z',
-    description: 'The start date of the ROSCA circle',
+    description: 'The deadline for the first contribution. Payout occurs 24 hours after this.',
     type: String,
     required: false,
   })
-  startDate?: Date | null;
+  initialContributionDeadline?: Date | null;
   @ApiProperty() collateralPercentage!: number;
   @ApiProperty({ type: AdminResponseDto })
   admin!: AdminResponseDto;
@@ -288,7 +291,7 @@ export function formatCircleResponse(circle: any): RoscaCircleResponseDto {
     filledSlots: circle.filledSlots,
     maxSlots: circle.maxSlots,
     status: circle.status,
-    startDate: circle.startDate,
+    initialContributionDeadline: circle.initialContributionDeadline,
     collateralPercentage: circle.collateralPercentage,
 
     // Formatted Admin Object

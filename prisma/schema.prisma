@@ -273,7 +273,7 @@ model RoscaCircle {
   minTrustScoreRequired Int @default(0) @map("min_trust_score_required")
 
   // Dates
-  startDate           DateTime? @map("start_date")
+  initialContributionDeadline DateTime? @map("initial_contribution_deadline")
   startDateRangeMin   DateTime? @map("start_date_range_min")
   startDateRangeMax   DateTime? @map("start_date_range_max")
   recruitmentDeadline DateTime? @map("recruitment_deadline")
