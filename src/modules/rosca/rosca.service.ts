@@ -537,6 +537,155 @@ export class RoscaService {
     });
   }
 
+  // =========================================================================
+  // JOIN REQUEST MANAGEMENT
+  // =========================================================================
+
+  /**
+   * Returns all circles managed by the admin that have at least one pending
+   * join request. Each entry includes the circle id, name, and pending count.
+   * Ordered by oldest pending request first (most urgent at top).
+   */
+  async getPendingJoinRequestsOverview(adminId: string) {
+    const circles = await this.prisma.roscaCircle.findMany({
+      where: {
+        adminId,
+        memberships: { some: { status: MembershipStatus.PENDING } },
+      },
+      select: {
+        id: true,
+        name: true,
+        memberships: {
+          where: { status: MembershipStatus.PENDING },
+          select: { joinedAt: true },
+          orderBy: { joinedAt: 'asc' },
+        },
+      },
+    });
+
+    return circles
+      .map((c) => ({
+        circleId: c.id,
+        name: c.name,
+        pendingCount: c.memberships.length,
+        oldestRequestAt: c.memberships[0]?.joinedAt ?? null,
+      }))
+      .sort((a, b) => {
+        if (!a.oldestRequestAt) return 1;
+        if (!b.oldestRequestAt) return -1;
+        return a.oldestRequestAt.getTime() - b.oldestRequestAt.getTime();
+      });
+  }
+
+  /**
+   * Returns the full requester dossier for all pending members in a specific
+   * circle. Supports optional name search scoped to that circle only.
+   */
+  async getCircleJoinRequests(circleId: string, adminId: string, search?: string) {
+    const circle = await this.prisma.roscaCircle.findUnique({
+      where: { id: circleId },
+      select: { adminId: true },
+    });
+    if (!circle) throw new NotFoundException('Circle not found');
+    if (circle.adminId !== adminId)
+      throw new ForbiddenException('Not authorized to manage this circle');
+
+    const memberships = await this.prisma.roscaMembership.findMany({
+      where: {
+        circleId,
+        status: MembershipStatus.PENDING,
+        ...(search && {
+          user: {
+            OR: [
+              { firstName: { contains: search, mode: 'insensitive' } },
+              { lastName: { contains: search, mode: 'insensitive' } },
+            ],
+          },
+        }),
+      },
+      include: {
+        user: {
+          select: {
+            id: true,
+            firstName: true,
+            lastName: true,
+            userTrustStats: true,
+          },
+        },
+      },
+      orderBy: { joinedAt: 'asc' },
+    });
+
+    return memberships.map((m) => {
+      const stats = m.user.userTrustStats;
+      const displayScore = stats ? Math.round(300 + stats.trustScore * 5.5) : 575;
+      const onTimeRate =
+        stats && stats.totalExpectedPayments > 0
+          ? Math.round((stats.totalOnTimePayments / stats.totalExpectedPayments) * 100)
+          : null;
+
+      return {
+        userId: m.userId,
+        membershipId: m.id,
+        name: `${m.user.firstName} ${m.user.lastName}`,
+        requestedAt: m.joinedAt,
+        trustScore: displayScore,
+        onTimePaymentRate: onTimeRate,
+        completedCycles: m.completedCycles,
+      };
+    });
+  }
+
+  // =========================================================================
+  // ADMIN DASHBOARD
+  // =========================================================================
+
+  async getAdminDashboard(adminId: string) {
+    const now = new Date();
+
+    const [circles, nextSchedule] = await Promise.all([
+      this.prisma.roscaCircle.findMany({
+        where: { adminId },
+        select: {
+          id: true,
+          name: true,
+          memberships: {
+            where: { status: MembershipStatus.PENDING },
+            select: { id: true },
+          },
+        },
+      }),
+      this.prisma.roscaCycleSchedule.findFirst({
+        where: {
+          circle: { adminId },
+          status: ScheduleStatus.UPCOMING,
+          contributionDeadline: { gte: now },
+          obsoletedAt: null,
+        },
+        orderBy: { contributionDeadline: 'asc' },
+        select: {
+          contributionDeadline: true,
+          circle: { select: { name: true } },
+        },
+      }),
+    ]);
+
+    const totalPendingRequests = circles.reduce((sum, c) => sum + c.memberships.length, 0);
+
+    return {
+      totalGroups: circles.length,
+      nextDeadline: nextSchedule
+        ? { groupName: nextSchedule.circle.name, deadline: nextSchedule.contributionDeadline }
+        : null,
+      pendingJoinRequests: {
+        total: totalPendingRequests,
+        breakdown: circles
+          .filter((c) => c.memberships.length > 0)
+          .map((c) => ({ groupName: c.name, pendingCount: c.memberships.length })),
+      },
+    };
+  }
+
   async adminListAllCircles(query: AdminListCirclesQueryDto) {
     const { status, adminId } = query;
 

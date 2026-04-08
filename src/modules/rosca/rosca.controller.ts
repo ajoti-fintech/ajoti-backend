@@ -25,6 +25,7 @@ import {
   RoscaCircleResponseDto,
   RoscaMembershipResponseDto,
   AdminListCirclesQueryDto,
+  JoinRequestSearchQueryDto,
   formatCircleResponse,
   formatMembershipResponse,
   RoscaCycleScheduleResponseDto,
@@ -141,6 +142,34 @@ export class RoscaAdminController {
       message: 'Circle created successfully in DRAFT mode',
       data: formatCircleResponse(circle),
     };
+  }
+
+  @Get('dashboard')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: '[Admin] Get dashboard summary: total groups, next deadline, pending requests' })
+  async getDashboard(@CurrentUser('userId') adminId: string) {
+    const data = await this.roscaService.getAdminDashboard(adminId);
+    return { success: true, message: 'Dashboard retrieved successfully', data };
+  }
+
+  @Get('join-requests')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: '[Admin] List all circles with pending join requests, grouped by circle' })
+  async getPendingJoinRequestsOverview(@CurrentUser('userId') adminId: string) {
+    const data = await this.roscaService.getPendingJoinRequestsOverview(adminId);
+    return { success: true, message: 'Pending join requests retrieved successfully', data };
+  }
+
+  @Get(':circleId/join-requests')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: '[Admin] Get requester dossiers for a specific circle, with optional name search' })
+  async getCircleJoinRequests(
+    @Param('circleId') circleId: string,
+    @CurrentUser('userId') adminId: string,
+    @Query() query: JoinRequestSearchQueryDto,
+  ) {
+    const data = await this.roscaService.getCircleJoinRequests(circleId, adminId, query.search);
+    return { success: true, message: 'Join requests retrieved successfully', data };
   }
 
   @Get('my-circles')

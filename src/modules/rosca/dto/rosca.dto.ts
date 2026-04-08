@@ -168,10 +168,13 @@ export class UpdateCircleDto {
   @IsOptional()
   maxSlots?: number;
 
-  @ApiPropertyOptional({ example: '2026-06-01T00:00:00Z' })
+  @ApiPropertyOptional({
+    example: '2026-06-01T00:00:00Z',
+    description: 'The deadline for the first contribution. Payout occurs 24 hours after this.',
+  })
   @IsDateString()
   @IsOptional()
-  startDate?: string;
+  initialContributionDeadline?: string;
 
   @ApiPropertyOptional({ example: 5.0, description: 'Collateral %' })
   @IsNumber()
@@ -184,6 +187,13 @@ export class UpdateCircleDto {
   @IsEnum(PayoutLogic)
   @IsOptional()
   payoutLogic?: PayoutLogic;
+}
+
+export class JoinRequestSearchQueryDto {
+  @ApiPropertyOptional({ description: 'Search requesters by name within the selected group' })
+  @IsOptional()
+  @IsString()
+  search?: string;
 }
 
 export class AdminListCirclesQueryDto {
