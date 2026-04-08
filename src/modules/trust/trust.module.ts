@@ -2,7 +2,7 @@
 import { Module } from '@nestjs/common';
 import { TrustService } from './trust.service';
 import { TrustController } from './trust.controller';
-import { PrismaModule } from '@/prisma/prisma.module';
+import { PrismaModule } from '../../prisma/prisma.module';
 
 @Module({
   imports: [PrismaModule],
@@ -10,4 +10,4 @@ import { PrismaModule } from '@/prisma/prisma.module';
   controllers: [TrustController],
   exports: [TrustService], // Required by Contribution and Rosca modules
 })
-export class TrustModule {}
+export class TrustModule { }

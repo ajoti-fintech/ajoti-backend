@@ -3,11 +3,6 @@ import { ConfigModule, ConfigService } from '@nestjs/config';
 import { APP_GUARD } from '@nestjs/core';
 import { ThrottlerModule } from '@nestjs/throttler';
 import { ScheduleModule } from '@nestjs/schedule';
-import { HealthModule } from '@/modules/health/health.module';
-import { PrismaModule } from '@/prisma/prisma.module';
-import { LoggerMiddleware } from '@/common/interceptors/logger.middleware';
-import { appConfig } from '@/config/app.config';
-import { flutterwaveConfig } from '@/config/flutterwave.config'; // ← NEW
 import { WalletModule } from './modules/wallet/wallet.module';
 import { WebhooksModule } from './modules/webhooks/webhooks.module';
 import { AuthModule } from './modules/auth/auth.module';
@@ -24,6 +19,11 @@ import { TransactionsModule } from './modules/transactions/transactions.module';
 import { FundingModule } from './modules/funding/funding.module';
 import { WithdrawalModule } from './modules/withdrawal/withdrawal.module';
 import { VirtualAccountModule } from './modules/virtual-accounts/virtual-account.module'; // ← NEW
+import { PrismaModule } from './prisma';
+import { HealthModule } from './modules/health';
+import { LoggerMiddleware } from './common';
+import { appConfig } from './config';
+import { flutterwaveConfig } from './config/flutterwave.config';
 
 const ENV = process.env.NODE_ENV || 'development';
 

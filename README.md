@@ -189,7 +189,6 @@ src/modules/example/
 ## Code Style
 
 - ESLint + Prettier configured
-- Absolute imports via `@/` prefix
 - Single quotes, trailing commas
 - 100 character line width
 

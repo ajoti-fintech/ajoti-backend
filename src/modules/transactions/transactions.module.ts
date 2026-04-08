@@ -12,11 +12,11 @@
 import { Module } from '@nestjs/common';
 import { TransactionsService } from './transactions.service';
 import { LedgerModule } from '../ledger/ledger.module';
-import { PrismaModule } from '@/prisma';
+import { PrismaModule } from '../../prisma';
 
 @Module({
   imports: [LedgerModule, PrismaModule],
   providers: [TransactionsService],
   exports: [TransactionsService],
 })
-export class TransactionsModule {}
+export class TransactionsModule { }

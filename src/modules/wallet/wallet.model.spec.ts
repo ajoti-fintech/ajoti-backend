@@ -1,4 +1,4 @@
-import { prisma, cleanDb } from '@/../test/prisma-test-utils';
+import { cleanDb, prisma } from "../../../test/prisma-test-utils";
 
 describe('Wallet model', () => {
   beforeEach(cleanDb);

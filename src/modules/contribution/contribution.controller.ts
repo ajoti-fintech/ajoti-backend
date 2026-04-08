@@ -13,13 +13,13 @@ import {
 import { ApiTags, ApiOperation, ApiResponse, ApiBearerAuth } from '@nestjs/swagger';
 import { ContributionService } from './contribution.service';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
-import { CurrentUser } from '@/common/decorators/current-user.decorator';
 import {
   RoscaContributionResponseDto,
   formatContributionResponse,
   CreateContributionDto,
   ListContributionsQueryDto,
 } from './dto/contribution.dto';
+import { CurrentUser } from '../../common/decorators/current-user.decorator';
 
 @ApiTags('Contributions')
 @Controller('rosca/:circleId/contributions')

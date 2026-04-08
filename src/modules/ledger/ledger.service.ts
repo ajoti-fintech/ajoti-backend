@@ -1,6 +1,6 @@
 // src/modules/ledger/ledger.service.ts
 import { Injectable, BadRequestException } from '@nestjs/common';
-import { PrismaService } from '@/prisma';
+import { PrismaService } from '../../prisma';
 import {
   LedgerEntry,
   EntryType,
@@ -24,7 +24,7 @@ export interface WriteEntryParams {
 
 @Injectable()
 export class LedgerService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(private readonly prisma: PrismaService) { }
 
   /**
    * Writes an atomic ledger entry using the running total pattern.
@@ -164,8 +164,8 @@ export class LedgerService {
     return txClient
       ? execute(txClient)
       : this.prisma.$transaction(execute, {
-          isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
-        });
+        isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
+      });
   }
 
   async createReversalEntry(originalEntryId: string, reason: string): Promise<LedgerEntry> {

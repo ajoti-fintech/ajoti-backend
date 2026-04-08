@@ -2,9 +2,9 @@
 import { Module } from '@nestjs/common';
 import { ContributionService } from './contribution.service';
 import { ContributionController } from './contribution.controller';
-import { PrismaModule } from '@/prisma/prisma.module';
 import { LedgerModule } from '../ledger/ledger.module';
 import { TrustModule } from '../trust/trust.module';
+import { PrismaModule } from '../../prisma';
 
 @Module({
   imports: [PrismaModule, LedgerModule, TrustModule],

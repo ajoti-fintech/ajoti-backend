@@ -2,18 +2,18 @@
 import { Controller, Post, Get, Body, UseGuards, HttpCode, HttpStatus, Param } from '@nestjs/common';
 import { ApiTags, ApiBearerAuth, ApiOperation, ApiResponse, ApiBody, ApiParam } from '@nestjs/swagger';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
-import { CurrentUser } from '@/common/decorators/current-user.decorator';
 import { FundingService } from './funding.service';
 import { InitializeFundingDto, FundingResponseDto } from './dto/funding.dto';
 import { RolesGuard } from '../auth/guards/roles.guard';
 import { Roles } from '../../common/decorators/roles.decorator';
+import { CurrentUser } from '../../common/decorators/current-user.decorator';
 
 @ApiTags('Wallet Funding')
 @ApiBearerAuth('access-token')
 @Controller('wallet/funding')
 @UseGuards(JwtAuthGuard)
 export class FundingController {
-  constructor(private readonly fundingService: FundingService) {}
+  constructor(private readonly fundingService: FundingService) { }
 
   @Post('initialize')
   @HttpCode(HttpStatus.CREATED)
@@ -53,7 +53,7 @@ export class FundingController {
 @UseGuards(JwtAuthGuard, RolesGuard)
 @Roles('SUPERADMIN')
 export class FundingAdminController {
-  constructor(private readonly fundingService: FundingService) {}
+  constructor(private readonly fundingService: FundingService) { }
 
   @Post('reconcile/:reference')
   @HttpCode(HttpStatus.OK)

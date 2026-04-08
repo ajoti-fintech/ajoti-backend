@@ -1,7 +1,7 @@
 // src/modules/funding/funding.service.ts
 import { Injectable, BadRequestException, Logger } from '@nestjs/common';
 import * as crypto from 'crypto';
-import { PrismaService } from '@/prisma/prisma.service';
+import { AxiosError } from 'axios';
 import { WalletService } from '../wallet/wallet.service';
 import { InitializeFundingDto } from './dto/funding.dto';
 import { Prisma, TransactionStatus, TransactionType } from '@prisma/client';
@@ -11,6 +11,7 @@ import {
   FundingReconciliationScheduler,
   ManualFundingReconcileResult,
 } from './funding-reconciliation.scheduler';
+import { PrismaService } from '../../prisma';
 
 @Injectable()
 export class FundingService {
@@ -60,28 +61,38 @@ export class FundingService {
     const user = await this.prisma.user.findUnique({ where: { id: userId } });
 
     // Call FLW — amount must be Naira (dto.amount is kobo)
-    const providerResponse = await this.flw.initiatePayment({
-      tx_ref: reference,
-      amount: Number(dto.amount) / 100,
-      currency: dto.currency ?? 'NGN',
-      redirect_url: dto.redirectUrl,
-      customer: {
-        email: user?.email ?? `user-${userId}@ajoti.com`,
-        name: user ? `${user.firstName} ${user.lastName}`.trim() : undefined,
-        phonenumber: user?.phone ?? undefined,
-      },
-      // Let checkout UI handle method selection (card, bank transfer, ussd).
-      payment_options: 'card,banktransfer,ussd',
-      meta: {
-        transactionId: transaction.id,
-        walletId: wallet.id,
-        userId,
-      },
-      customizations: {
-        title: 'Ajoti Wallet Top-up',
-        description: `Fund your Ajoti wallet — ₦${(Number(dto.amount) / 100).toLocaleString('en-NG')}`,
-      },
-    });
+    let providerResponse;
+    try {
+      providerResponse = await this.flw.initiatePayment({
+        tx_ref: reference,
+        amount: Number(dto.amount) / 100,
+        currency: dto.currency ?? 'NGN',
+        redirect_url: dto.redirectUrl,
+        customer: {
+          email: user?.email ?? `user-${userId}@ajoti.com`,
+          name: user ? `${user.firstName} ${user.lastName}`.trim() : undefined,
+          phonenumber: user?.phone ?? undefined,
+        },
+        // Let checkout UI handle method selection (card, bank transfer, ussd).
+        payment_options: 'card,banktransfer,ussd',
+        meta: {
+          transactionId: transaction.id,
+          walletId: wallet.id,
+          userId,
+        },
+        customizations: {
+          title: 'Ajoti Wallet Top-up',
+          description: `Fund your Ajoti wallet — ₦${(Number(dto.amount) / 100).toLocaleString('en-NG')}`,
+        },
+      });
+    } catch (error: unknown) {
+      const providerMessage = this.extractProviderMessage(error);
+      this.logger.error(
+        `FLW payment initialization threw for ref=${reference}: ${providerMessage}`,
+      );
+      await this.transactionsService.markAsFailed(reference, providerMessage);
+      throw new BadRequestException('Payment provider unavailable. Please try again.');
+    }
 
     if (providerResponse.status !== 'success' || !providerResponse.data?.link) {
       this.logger.error('FLW payment initialization failed', providerResponse);
@@ -144,6 +155,27 @@ export class FundingService {
     return this.fundingReconciliationScheduler.reconcileByReference(
       normalizedReference,
       superAdminId,
+    );
+  }
+
+  private extractProviderMessage(error: unknown): string {
+    if (!(error instanceof AxiosError)) {
+      return error instanceof Error
+        ? error.message
+        : 'Provider returned an unexpected error';
+    }
+
+    const responseData = error.response?.data as Record<string, unknown> | undefined;
+    const nestedData =
+      responseData && typeof responseData.data === 'object' && responseData.data !== null
+        ? (responseData.data as Record<string, unknown>)
+        : undefined;
+
+    return (
+      (typeof responseData?.message === 'string' && responseData.message) ||
+      (typeof nestedData?.message === 'string' && nestedData.message) ||
+      error.message ||
+      'Provider returned an unexpected error'
     );
   }
 }

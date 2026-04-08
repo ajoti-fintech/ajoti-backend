@@ -1,7 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { Cron, CronExpression } from '@nestjs/schedule';
 import { PayoutService } from './payout.service';
-import { PrismaService } from '@/prisma/prisma.service';
+import { PrismaService } from '../../prisma';
 import { PayoutStatus, ScheduleStatus } from '@prisma/client';
 
 @Injectable()
@@ -11,7 +11,7 @@ export class PayoutSchedulerService {
   constructor(
     private readonly payoutService: PayoutService,
     private readonly prisma: PrismaService,
-  ) {}
+  ) { }
 
   @Cron(CronExpression.EVERY_HOUR)
   async processDuePayouts() {
@@ -52,7 +52,7 @@ export class PayoutSchedulerService {
 
           this.logger.log(
             `Payout successful: Circle ${circle.name || circleId}, Cycle ${cycleNumber}, ` +
-              `Payout ID: ${result.payoutId}, Amount: ₦${Number(result.amount) / 100}`,
+            `Payout ID: ${result.payoutId}, Amount: ₦${Number(result.amount) / 100}`,
           );
         } catch (error) {
           this.logger.error(

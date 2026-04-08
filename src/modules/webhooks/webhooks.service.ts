@@ -11,7 +11,7 @@ import {
   TransactionStatus,
   TransactionType,
 } from '@prisma/client';
-import { PrismaService } from '@/prisma';
+import { PrismaService } from '../../prisma';
 import { FlutterwaveProvider } from '../flutterwave/flutterwave.provider';
 import {
   FlwWebhookPayload,
@@ -40,7 +40,7 @@ export class WebhooksService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly flw: FlutterwaveProvider,
-  ) {}
+  ) { }
 
   /**
    * Entry point for all Flutterwave webhooks.

@@ -2,7 +2,7 @@ import { Module } from '@nestjs/common';
 import { ScheduleModule } from '@nestjs/schedule';
 import { PayoutService } from './payout.service';
 import { PayoutSchedulerService } from './payout-scheduler.service';
-import { PrismaModule } from '@/prisma';
+import { PrismaModule } from '../../prisma';
 import { LedgerModule } from '../ledger/ledger.module';
 import { PayoutAdminController, PayoutController } from './payout.controller';
 
@@ -12,4 +12,4 @@ import { PayoutAdminController, PayoutController } from './payout.controller';
   providers: [PayoutService, PayoutSchedulerService],
   exports: [PayoutService],
 })
-export class PayoutModule {}
+export class PayoutModule { }

@@ -8,7 +8,7 @@ import {
   ApiTags,
 } from '@nestjs/swagger';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
-import { CurrentUser } from '@/common/decorators/current-user.decorator';
+import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { UsersService } from './users.service';
 import { DeleteUserAccountDto } from './dto/delete-user.dto';
 
@@ -17,7 +17,7 @@ import { DeleteUserAccountDto } from './dto/delete-user.dto';
 @UseGuards(JwtAuthGuard)
 @ApiBearerAuth('access-token')
 export class UsersController {
-  constructor(private readonly usersService: UsersService) {}
+  constructor(private readonly usersService: UsersService) { }
 
   @Delete('me')
   @HttpCode(HttpStatus.OK)

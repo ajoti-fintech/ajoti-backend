@@ -22,7 +22,7 @@ import {
 } from './dto/wallet.dto';
 import { LedgerService } from '../ledger/ledger.service';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
-import { CurrentUser } from '@/common/decorators/current-user.decorator';
+import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { Roles } from '../../common/decorators/roles.decorator';
 import { RolesGuard } from '../auth/guards/roles.guard';
 
@@ -34,7 +34,7 @@ export class WalletController {
   constructor(
     private readonly walletService: WalletService,
     private readonly ledgerService: LedgerService,
-  ) {}
+  ) { }
 
   @Get()
   @HttpCode(HttpStatus.OK)
@@ -136,7 +136,7 @@ export class WalletController {
       success: true,
       message: 'Status retrieved successfully',
       data: {
-        walletId: wallet.id,  
+        walletId: wallet.id,
         status: wallet.status,
         isActive,
         canWithdraw,
@@ -217,7 +217,7 @@ export class WalletController {
 @Roles('ADMIN', 'SUPERADMIN')
 @ApiBearerAuth('access-token')
 export class WalletAdminController {
-  constructor(private readonly walletService: WalletService) {}
+  constructor(private readonly walletService: WalletService) { }
 
   @Get('user/:userId')
   @ApiOperation({ summary: '[Admin] Get user wallet by User ID' })

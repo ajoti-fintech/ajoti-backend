@@ -16,7 +16,7 @@ import { RoscaService } from './rosca.service';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../auth/guards/roles.guard';
 
-import { CurrentUser } from '@/common/decorators/current-user.decorator';
+import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import {
   CreateRoscaCircleDto,
   ListCirclesQueryDto,
@@ -30,14 +30,14 @@ import {
   formatScheduleResponse,
   UpdatePayoutConfigDto,
 } from './dto/rosca.dto';
-import { Roles } from '@/common/decorators/roles.decorator';
+import { Roles } from '../../common/decorators/roles.decorator';
 
 @ApiTags('ROSCA')
 @Controller('rosca')
 @UseGuards(JwtAuthGuard)
 @ApiBearerAuth('access-token')
 export class RoscaController {
-  constructor(private readonly roscaService: RoscaService) {}
+  constructor(private readonly roscaService: RoscaService) { }
 
   @Get()
   @HttpCode(HttpStatus.OK)
@@ -89,7 +89,7 @@ export class RoscaController {
 @Roles('ADMIN', 'SUPERADMIN')
 @ApiBearerAuth('access-token')
 export class RoscaAdminController {
-  constructor(private readonly roscaService: RoscaService) {}
+  constructor(private readonly roscaService: RoscaService) { }
 
   @Post()
   @HttpCode(HttpStatus.CREATED)

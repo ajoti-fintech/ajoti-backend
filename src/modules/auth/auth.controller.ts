@@ -36,7 +36,7 @@ import {
 } from '@nestjs/swagger';
 import { Throttle } from '@nestjs/throttler';
 import { JwtAuthGuard } from './guards/jwt-auth.guard';
-import { AuthRequest } from '@/common/types/auth-request';
+import { AuthRequest } from '../../common/types/auth-request';
 
 @ApiTags('Auth')
 @Controller('auth')

@@ -15,7 +15,7 @@ import {
 } from '@nestjs/swagger';
 import { VirtualAccountService } from "./virtual-account.service";
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
-import { CurrentUser } from '@/common/decorators/current-user.decorator';
+import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import {
     VirtualAccountResponseDto,
     formatVirtualAccountResponse,

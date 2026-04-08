@@ -288,18 +288,18 @@ export class VirtualAccountService {
         } catch (error) {
             // Handles race conditions: concurrent requests for same user may both
             // reach provider, but only one DB row can be stored.
-            if (
-                error instanceof Prisma.PrismaClientKnownRequestError &&
-                error.code === 'P2002'
-            ) {
-                const existing = await this.prisma.virtualAccount.findUnique({
-                    where: { userId },
-                });
-                if (existing) {
-                    this.logger.warn(
-                        `Virtual account already exists after concurrent provision for user ${userId}; returning existing row`,
-                    );
-                    return existing;
+            if (error instanceof Prisma.PrismaClientKnownRequestError) {
+                const prismaError = error as Prisma.PrismaClientKnownRequestError;
+                if (prismaError.code === 'P2002') {
+                    const existing = await this.prisma.virtualAccount.findUnique({
+                        where: { userId },
+                    });
+                    if (existing) {
+                        this.logger.warn(
+                            `Virtual account already exists after concurrent provision for user ${userId}; returning existing row`,
+                        );
+                        return existing;
+                    }
                 }
             }
             throw error;

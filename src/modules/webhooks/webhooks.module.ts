@@ -2,7 +2,7 @@
 import { Module } from '@nestjs/common';
 import { WebhooksController } from './webhooks.controller';
 import { WebhooksService } from './webhooks.service';
-import { PrismaModule } from '@/prisma';
+import { PrismaModule } from '../../prisma';
 import { FlutterwaveModule } from '../flutterwave/flutterwave.module';
 // VirtualAccountModule is imported so WebhooksService can query
 // the virtual_accounts table when routing VA charge.completed events.
@@ -20,4 +20,4 @@ import { FlutterwaveModule } from '../flutterwave/flutterwave.module';
   controllers: [WebhooksController],
   providers: [WebhooksService],
 })
-export class WebhooksModule {}
+export class WebhooksModule { }

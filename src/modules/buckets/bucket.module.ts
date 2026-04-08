@@ -1,13 +1,14 @@
 import { Module } from '@nestjs/common';
-import { PrismaService } from '../../prisma/prisma.service';
+import { PrismaModule } from '../../prisma';
 import { LedgerModule } from '../ledger/ledger.module';
 import { BucketService } from './bucket.service';
 
 @Module({
   imports: [
+    PrismaModule,
     LedgerModule, // REQUIRED because you inject LedgerService
   ],
-  providers: [BucketService, PrismaService],
+  providers: [BucketService],
   exports: [
     BucketService, // so Wallet / Rosca modules can use it
   ],

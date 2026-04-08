@@ -16,10 +16,10 @@ import {
   WalletStatus,
 } from '@prisma/client';
 import * as crypto from 'crypto';
-import { hashValue, verifyHash } from '@/common';
 import { VirtualAccountService } from '../virtual-accounts/virtual-account.service';
 import { WalletService } from '../wallet/wallet.service';
 import { DeleteUserAccountDto } from './dto/delete-user.dto';
+import { hashValue, verifyHash } from '../../common';
 
 @Injectable()
 export class UsersService {

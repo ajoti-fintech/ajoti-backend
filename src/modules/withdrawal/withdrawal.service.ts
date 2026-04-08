@@ -13,8 +13,8 @@ import {
     TransactionType,
     WalletStatus,
 } from '@prisma/client';
-import { v4 as uuidv4 } from 'uuid';
-import { PrismaService } from '@/prisma';
+import { randomUUID } from 'node:crypto';
+import { PrismaService } from '../../prisma';
 import { InitializeWithdrawalDto, WithdrawalResponseDto } from './dto/withdrawal.dto';
 
 /**
@@ -75,7 +75,7 @@ export class WithdrawalService {
         }
 
         // Build reference before transaction so we can use it in both FLW and DB
-        const withdrawalRef = `WITHDRAWAL-${uuidv4()}`;
+        const withdrawalRef = `WITHDRAWAL-${randomUUID()}`;
 
         try {
             // Use a Prisma transaction for all DB operations

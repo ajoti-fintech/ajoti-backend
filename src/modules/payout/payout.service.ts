@@ -13,7 +13,7 @@ import {
   PayoutStatus,
   MembershipStatus,
 } from '@prisma/client';
-import { PrismaService } from '@/prisma';
+import { PrismaService } from '../../prisma';
 import { LedgerService } from '../ledger/ledger.service';
 import { PayoutResult } from './interfaces/payout.interface';
 import { ReversePayoutDto } from './dto/payout.dto';
@@ -33,7 +33,7 @@ export class PayoutService {
   constructor(
     private prisma: PrismaService,
     private ledger: LedgerService,
-  ) {}
+  ) { }
 
   /**
    * PROCESS PAYOUT — Rules R1, R5, R7, R10

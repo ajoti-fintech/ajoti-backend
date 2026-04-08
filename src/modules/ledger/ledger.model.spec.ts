@@ -1,5 +1,5 @@
-import { prisma, cleanDb } from '@/../test/prisma-test-utils';
 import { EntryType, MovementType, LedgerSourceType } from '@prisma/client';
+import { cleanDb, prisma } from '../../../test/prisma-test-utils';
 
 describe('LedgerEntry model', () => {
   let walletId: string;

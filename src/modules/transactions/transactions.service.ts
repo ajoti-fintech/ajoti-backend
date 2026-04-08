@@ -1,6 +1,6 @@
 // src/modules/transactions/transactions.service.ts
 import { Injectable, Logger } from '@nestjs/common';
-import { PrismaService } from '@/prisma/prisma.service';
+import { PrismaService } from '../../prisma';
 import { LedgerService } from '../ledger/ledger.service';
 import {
   TransactionStatus,
@@ -44,7 +44,7 @@ export class TransactionsService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly ledgerService: LedgerService,
-  ) {}
+  ) { }
 
   /**
    * Create a new transaction record (usually PENDING)
@@ -243,7 +243,7 @@ export class TransactionsService {
     if (overpayment) {
       this.logger.warn(
         `Overpayment detected: expected ${expectedKobo.toString()} kobo, ` +
-          `got ${receivedKobo.toString()} kobo. Crediting full amount.`,
+        `got ${receivedKobo.toString()} kobo. Crediting full amount.`,
       );
     }
 

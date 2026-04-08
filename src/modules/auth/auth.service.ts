@@ -1,4 +1,3 @@
-import { PrismaService } from '@/prisma';
 import {
   BadRequestException,
   ForbiddenException,
@@ -18,11 +17,12 @@ import {
   VerifyEmailDto,
 } from './dto/auth.dto';
 import { OTPPurpose, Role } from '@prisma/client';
-import { generateOtpCode, hashValue, verifyHash } from '@/common';
 import * as crypto from 'crypto';
 import { resetPasswordOtpTemplate } from '../mail/templates/otp-reset-password';
 import { verificationOtpTemplate } from '../mail/templates/otp-verification';
-import { MailErrorMapper } from '@/common/error/mail-error';
+import { MailErrorMapper } from '../../common/error/mail-error';
+import { generateOtpCode, hashValue, verifyHash } from '../../common';
+import { PrismaService } from '../../prisma';
 
 function sha256(input: string) {
   return crypto.createHash('sha256').update(input).digest('hex');
@@ -134,10 +134,12 @@ export class AuthService {
 
     try {
       await this.mail.send(user.email, subject, html);
-    } catch (err) {
-      this.logger?.error?.('OTP email failed', err?.stack || err);
+    } catch (err: unknown) {
+      const errorLog =
+        err instanceof Error ? (err.stack ?? err.message) : JSON.stringify(err);
+      this.logger?.error?.('OTP email failed', errorLog);
 
-      this.mailErrorMapper.map(err);
+      throw this.mailErrorMapper.map(err);
     }
 
     return { message: 'OTP Sent' };

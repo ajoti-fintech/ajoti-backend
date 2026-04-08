@@ -9,12 +9,12 @@ import {
   TransactionStatus,
   TransactionType,
 } from '@prisma/client';
-import { PrismaService } from '@/prisma/prisma.service';
 import {
   FlutterwaveProvider,
   FlwVerifyTransactionResponse,
 } from '../flutterwave/flutterwave.provider';
 import { AxiosError } from 'axios';
+import { PrismaService } from '../../prisma';
 
 type ReconcileSource = 'RECONCILIATION_JOB' | 'MANUAL';
 
@@ -64,25 +64,21 @@ export class FundingReconciliationScheduler {
   private readonly logger = new Logger(FundingReconciliationScheduler.name);
   private static readonly GRACE_PERIOD_MS = 5 * 60 * 1000; // 5 minutes
   private static readonly BATCH_SIZE = 100;
+  private static readonly MISSING_PROVIDER_RECORD_FAIL_AFTER_MS = 30 * 60 * 1000; // 30 minutes
 
   constructor(
     private readonly prisma: PrismaService,
     private readonly flw: FlutterwaveProvider,
-  ) {}
+  ) { }
 
   @Cron('*/2 * * * *')
   async reconcilePendingFundingTransactions(): Promise<void> {
     const cutoff = new Date(Date.now() - FundingReconciliationScheduler.GRACE_PERIOD_MS);
 
-    const pending = await this.prisma.transaction.findMany({
-      where: {
-        type: TransactionType.FUNDING,
-        status: TransactionStatus.PENDING,
-        createdAt: { lte: cutoff },
-      },
-      orderBy: { createdAt: 'asc' },
-      take: FundingReconciliationScheduler.BATCH_SIZE,
-    });
+    const pending = await this.loadPendingFundingTransactions(cutoff);
+    if (!pending) {
+      return;
+    }
 
     if (pending.length === 0) {
       this.logger.debug('No stale pending funding transactions found');
@@ -135,6 +131,30 @@ export class FundingReconciliationScheduler {
       verifyResult = await this.flw.verifyTransactionByReference(normalizedReference);
     } catch (error) {
       const providerError = this.extractProviderError(error);
+
+      if (this.shouldFailMissingProviderRecord(current.createdAt, providerError.message)) {
+        await this.markFailed(
+          current.id,
+          `Provider has no transaction record for ref=${current.reference} after timeout`,
+          {
+            source: 'MANUAL',
+            actorId: superAdminId,
+          },
+        );
+
+        return {
+          reference: normalizedReference,
+          outcome: 'marked_failed',
+          reconciledAt,
+          transactionId: current.id,
+          transactionStatus: TransactionStatus.FAILED,
+          transactionType: current.type,
+          reason: 'provider_record_missing_timeout',
+          providerMessage: providerError.message,
+          providerErrorCode: providerError.code,
+        };
+      }
+
       return {
         reference: normalizedReference,
         outcome: 'provider_error',
@@ -296,8 +316,19 @@ export class FundingReconciliationScheduler {
     try {
       verifyResult = await this.flw.verifyTransactionByReference(fresh.reference);
     } catch (error) {
+      const providerError = this.extractProviderError(error);
+
+      if (this.shouldFailMissingProviderRecord(fresh.createdAt, providerError.message)) {
+        await this.markFailed(
+          fresh.id,
+          `Provider has no transaction record for ref=${fresh.reference} after timeout`,
+          { source: 'RECONCILIATION_JOB' },
+        );
+        return;
+      }
+
       this.logger.warn(
-        `Provider verification unavailable for ref=${fresh.reference}; will retry next cycle`,
+        `Provider verification unavailable for ref=${fresh.reference}; message=${providerError.message}; will retry next cycle`,
       );
       return;
     }
@@ -415,12 +446,12 @@ export class FundingReconciliationScheduler {
             fundingMethodLabel,
             ...(context.source === 'MANUAL'
               ? {
-                  manualReconciledBy: context.actorId ?? null,
-                  manualReconciledAt: reconciledAt,
-                }
+                manualReconciledBy: context.actorId ?? null,
+                manualReconciledAt: reconciledAt,
+              }
               : {
-                  reconciledByJobAt: reconciledAt,
-                }),
+                reconciledByJobAt: reconciledAt,
+              }),
           },
         },
       });
@@ -442,12 +473,12 @@ export class FundingReconciliationScheduler {
             fundingLedgerReference: fundingReference,
             ...(context.source === 'MANUAL'
               ? {
-                  manualReconciledBy: context.actorId ?? null,
-                  manualReconciledAt: reconciledAt,
-                }
+                manualReconciledBy: context.actorId ?? null,
+                manualReconciledAt: reconciledAt,
+              }
               : {
-                  reconciledByJobAt: reconciledAt,
-                }),
+                reconciledByJobAt: reconciledAt,
+              }),
           },
         },
       });
@@ -480,12 +511,12 @@ export class FundingReconciliationScheduler {
           reconciliationFailureReason: reason,
           ...(context.source === 'MANUAL'
             ? {
-                manualReconciledBy: context.actorId ?? null,
-                manualReconciledAt: new Date().toISOString(),
-              }
+              manualReconciledBy: context.actorId ?? null,
+              manualReconciledAt: new Date().toISOString(),
+            }
             : {
-                reconciledByJobAt: new Date().toISOString(),
-              }),
+              reconciledByJobAt: new Date().toISOString(),
+            }),
         },
       },
     });
@@ -493,6 +524,165 @@ export class FundingReconciliationScheduler {
     this.logger.warn(`Marked funding transaction failed during reconciliation: ${reason}`);
   }
 
+  private async loadPendingFundingTransactions(cutoff: Date): Promise<Transaction[] | null> {
+    try {
+      return await this.fetchPendingFundingTransactions(cutoff);
+    } catch (error) {
+      if (!this.isRecoverableConnectionError(error)) {
+        throw error;
+      }
+
+      this.logger.warn(
+        'Funding reconciliation skipped: database connection issue detected. Attempting Prisma reconnect.',
+      );
+
+      const reconnected = await this.reconnectPrismaClient();
+      if (!reconnected) {
+        return null;
+      }
+
+      await this.sleep(
+        Number(process.env.FUNDING_RECON_RETRY_DELAY_MS ?? '2000'),
+      );
+
+      try {
+        return await this.fetchPendingFundingTransactions(cutoff);
+      } catch (retryError) {
+        if (!this.isRecoverableConnectionError(retryError)) {
+          throw retryError;
+        }
+
+        this.logger.warn(
+          'Funding reconciliation retry skipped: database connection still unavailable. Will retry next cycle.',
+        );
+        return null;
+      }
+    }
+  }
+
+  private async fetchPendingFundingTransactions(cutoff: Date): Promise<Transaction[]> {
+    return this.prisma.transaction.findMany({
+      where: {
+        type: TransactionType.FUNDING,
+        status: TransactionStatus.PENDING,
+        createdAt: { lte: cutoff },
+      },
+      orderBy: { createdAt: 'asc' },
+      take: FundingReconciliationScheduler.BATCH_SIZE,
+    });
+  }
+
+  private isRecoverableConnectionError(error: unknown): boolean {
+    for (const candidate of this.getErrorChain(error)) {
+      const code = this.getErrorCode(candidate);
+      if (
+        code &&
+        [
+          'P1001',
+          'P1002',
+          'P1017',
+          'EACCES',
+          'ETIMEDOUT',
+          'ECONNRESET',
+          'ECONNREFUSED',
+          'EPIPE',
+          'EHOSTUNREACH',
+          'EAI_AGAIN',
+        ].includes(code.toUpperCase())
+      ) {
+        return true;
+      }
+
+      if (candidate instanceof Error && this.isConnectionErrorMessage(candidate.message)) {
+        return true;
+      }
+    }
+
+    return false;
+  }
+
+  private getErrorCode(error: unknown): string | null {
+    if (!error || typeof error !== 'object') {
+      return null;
+    }
+
+    const code = (error as { code?: unknown }).code;
+    return typeof code === 'string' ? code : null;
+  }
+
+  private isConnectionErrorMessage(message: string): boolean {
+    return (
+      /server has closed the connection|connection closed|connection terminated/i.test(message) ||
+      /connection timeout|timed out|etimedout|econnreset|econnrefused/i.test(message)
+    );
+  }
+
+  private getErrorChain(error: unknown): unknown[] {
+    const chain: unknown[] = [];
+    let current: unknown = error;
+    let depth = 0;
+
+    while (current && depth < 6) {
+      chain.push(current);
+
+      if (typeof current !== 'object') {
+        break;
+      }
+
+      const next = (current as { cause?: unknown }).cause;
+      if (!next || next === current) {
+        break;
+      }
+
+      current = next;
+      depth += 1;
+    }
+
+    return chain;
+  }
+
+  private async reconnectPrismaClient(): Promise<boolean> {
+    try {
+      await this.prisma.$disconnect();
+    } catch {
+      // Ignore disconnect errors; we only care about getting a fresh connection.
+    }
+
+    const maxAttempts = Number(process.env.DB_RECONNECT_ATTEMPTS ?? '3');
+    const baseDelayMs = Number(process.env.DB_RECONNECT_BACKOFF_MS ?? '1000');
+
+    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+      try {
+        await this.prisma.$connect();
+        // Force a real round-trip; $connect can succeed before first query actually fails.
+        await this.prisma.$queryRaw`SELECT 1`;
+        this.logger.log(
+          `Prisma connection re-established for funding reconciliation (attempt ${attempt}/${maxAttempts})`,
+        );
+        return true;
+      } catch (reconnectError) {
+        if (attempt === maxAttempts) {
+          this.logger.error(
+            'Prisma reconnect failed for funding reconciliation',
+            reconnectError instanceof Error ? reconnectError.stack : String(reconnectError),
+          );
+          return false;
+        }
+
+        await this.sleep(baseDelayMs * attempt);
+      }
+    }
+
+    return false;
+  }
+
+  private async sleep(ms: number): Promise<void> {
+    if (!Number.isFinite(ms) || ms <= 0) {
+      return;
+    }
+
+    await new Promise((resolve) => setTimeout(resolve, ms));
+  }
   private resolveFundingMethodLabel(providerPaymentType?: string): string {
     const paymentType = providerPaymentType?.toLowerCase().trim();
 
@@ -567,4 +757,19 @@ export class FundingReconciliationScheduler {
           : undefined,
     };
   }
+
+  private shouldFailMissingProviderRecord(
+    createdAt: Date,
+    providerMessage: string,
+  ): boolean {
+    const ageMs = Date.now() - createdAt.getTime();
+    if (ageMs < FundingReconciliationScheduler.MISSING_PROVIDER_RECORD_FAIL_AFTER_MS) {
+      return false;
+    }
+
+    return /no\s+transaction\s+was\s+found/i.test(providerMessage);
+  }
 }
+
+
+

@@ -15,7 +15,7 @@ import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../auth/guards/roles.guard';
 import { PayoutSchedulerService } from './payout-scheduler.service';
 import { ReversePayoutDto } from './dto/payout.dto';
-import { Roles } from '@/common/decorators/roles.decorator';
+import { Roles } from '../../common/decorators/roles.decorator';
 
 @ApiTags('Payouts')
 @Controller('rosca/:circleId/payouts')

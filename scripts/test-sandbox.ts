@@ -1,6 +1,6 @@
 import 'dotenv/config';
-import { FlutterwaveProvider } from '@/modules/flutterwave/flutterwave.provider';
 import { ConfigService } from '@nestjs/config';
+import { FlutterwaveProvider } from '../src/modules/flutterwave/flutterwave.provider';
 
 /**
  * Standalone sandbox connectivity test.

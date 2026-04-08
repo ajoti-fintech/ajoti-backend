@@ -3,8 +3,8 @@ import { KycController } from './kyc.controller';
 import { KycService } from './kyc.service';
 import { UsersModule } from '../users/users.module';
 import { IdentityVerificationService } from './identity-verification.service';
-import { PrismaModule } from '@/prisma';
 import { VirtualAccountModule } from '../virtual-accounts/virtual-account.module';
+import { PrismaModule } from '../../prisma';
 
 @Module({
   imports: [UsersModule, PrismaModule, VirtualAccountModule],
