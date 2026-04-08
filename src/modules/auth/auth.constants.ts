@@ -6,5 +6,6 @@ export const authConstants: {
   readonly JWT_EXPIRATION_TIME: StringValue;
 } = {
   JWT_SECRET: process.env.JWT_ACCESS_SECRET!,
-  JWT_EXPIRATION_TIME: '1d',
+  // Sync with env - 2 hours default (was hardcoded '1d')
+  JWT_EXPIRATION_TIME: (process.env.JWT_ACCESS_EXPIRES_IN as StringValue) || '1h',
 };

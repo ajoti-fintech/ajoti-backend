@@ -7,8 +7,8 @@ import {
   // ServiceUnavailableException,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import { InjectQueue } from '@nestjs/bullmq';
 import { JwtService } from '@nestjs/jwt';
-import { MailService } from '../mail/mail.service';
 import {
   ChangePasswordDto,
   ForgotPasswordDto,
@@ -17,12 +17,14 @@ import {
   VerifyEmailDto,
 } from './dto/auth.dto';
 import { OTPPurpose, Role } from '@prisma/client';
+import { hashValue, verifyHash } from '@/common';
 import * as crypto from 'crypto';
+import { Queue } from 'bullmq';
+import { StringValue } from 'ms';
 import { resetPasswordOtpTemplate } from '../mail/templates/otp-reset-password';
 import { verificationOtpTemplate } from '../mail/templates/otp-verification';
-import { MailErrorMapper } from '../../common/error/mail-error';
-import { generateOtpCode, hashValue, verifyHash } from '../../common';
-import { PrismaService } from '../../prisma';
+import { OtpService } from '../otp/otp.service';
+import { AUTH_EVENTS_QUEUE, AuthJobName } from './auth.events';
 
 function sha256(input: string) {
   return crypto.createHash('sha256').update(input).digest('hex');
@@ -34,34 +36,44 @@ export class AuthService {
     private prisma: PrismaService,
     private config: ConfigService,
     private jwt: JwtService,
-    private mail: MailService,
-    private readonly mailErrorMapper: MailErrorMapper,
+    private readonly otpService: OtpService,
+    @InjectQueue(AUTH_EVENTS_QUEUE) private readonly authEventsQueue: Queue,
   ) {}
 
   private logger = new Logger('HTTP');
 
-  private otpExpiresAt() {
-    const mins = Number(this.config.get<string>('OTP_EXPIRES_MINUTES') || '10');
-    return new Date(Date.now() + mins * 60_000);
-  }
-
   private async issueTokens(userId: string, role: Role) {
-    const access = await this.jwt.signAsync(
+    // 1. ENFORCE SINGLE SESSION: Revoke all existing non-revoked tokens for this user
+    // This ensures that logging in on Device B kicks the user off Device A.
+    await this.prisma.refreshToken.updateMany({
+      where: {
+        userId,
+        revokedAt: null,
+      },
+      data: {
+        revokedAt: new Date(),
+      },
+    });
+
+    // 2. Access Token Generation
+    const accessExpires = this.config.get<string>('JWT_ACCESS_EXPIRES_IN') || '1h';
+    const accessToken = await this.jwt.signAsync(
       { sub: userId, role },
       {
         secret: this.config.get<string>('JWT_ACCESS_SECRET'),
-        expiresIn: this.config.get<number>('JWT_ACCESS_EXPIRES_IN') || '15m',
+        expiresIn: accessExpires as StringValue,
       },
     );
 
+    // 3. Refresh Token Generation (Rotation ready)
     const refreshRaw = crypto.randomBytes(48).toString('hex');
     const refreshHash = sha256(refreshRaw);
 
-    const refreshDays = (this.config.get<string>('JWT_REFRESH_EXPIRES_IN') || '30d').toLowerCase();
-    // quick parse: "30d" only (keep it simple)
-    const days = Number(refreshDays.replace('d', '')) || 30;
-    const refreshExpires = new Date(Date.now() + days * 24 * 60 * 60_000);
+    const refreshExpiresIn = this.config.get<string>('JWT_REFRESH_EXPIRES_IN') || '30d';
+    const days = Number(refreshExpiresIn.toLowerCase().replace(/[^0-9]/g, '')) || 7;
+    const refreshExpires = new Date(Date.now() + days * 24 * 60 * 60 * 1000);
 
+    // 4. Store the NEW valid session
     await this.prisma.refreshToken.create({
       data: {
         userId,
@@ -70,7 +82,36 @@ export class AuthService {
       },
     });
 
-    return { accessToken: access, refreshToken: refreshRaw };
+    return {
+      accessToken,
+      refreshToken: refreshRaw,
+      expiresIn: accessExpires,
+    };
+  }
+
+  async refreshTokens(refreshToken: string) {
+    if (!refreshToken) throw new BadRequestException('Refresh token is required');
+
+    const tokenHash = sha256(refreshToken);
+
+    // 1. Find the token and ensure it's still valid
+    const storedToken = await this.prisma.refreshToken.findFirst({
+      where: {
+        tokenHash,
+        revokedAt: null,
+        expiresAt: { gt: new Date() },
+      },
+      include: { user: true },
+    });
+
+    if (!storedToken) {
+      throw new UnauthorizedException('Invalid or expired refresh token');
+    }
+
+    // 2. Just issue the new pair.
+    // Since issueTokens() has the 'updateMany' logic, it will
+    // automatically revoke this 'storedToken' along with any others.
+    return this.issueTokens(storedToken.user.id, storedToken.user.role);
   }
 
   async register(registerDto: RegisterDto) {
@@ -89,7 +130,7 @@ export class AuthService {
         gender: registerDto.gender,
         phone: registerDto.phone,
         password: passwordHash,
-        role: Role.MEMBER,
+        role: registerDto.role,
         profile: { create: {} },
         kyc: { create: {} },
       },
@@ -97,79 +138,106 @@ export class AuthService {
     });
 
     const fullName = `${registerDto.firstName} ${registerDto.lastName}`;
-    await this.sendOtp(registerDto.email, OTPPurpose.VERIFICATION, fullName);
+    await this.otpService.sendOtp(registerDto.email, OTPPurpose.VERIFICATION, {
+      subject: 'Verify your email',
+      buildHtml: (args) => verificationOtpTemplate(args.otp, args.expiryMinutes, fullName),
+    });
+
+    await this.authEventsQueue.add(
+      AuthJobName.USER_REGISTERED,
+      {
+        userId: user.id,
+        email: user.email,
+        fullName,
+        timestamp: new Date().toISOString(),
+      },
+      {
+        removeOnComplete: true,
+        attempts: 5,
+      },
+    );
 
     return { message: 'Registered, OTP sent to mail', userEmail: user.email };
   }
 
-  async sendOtp(email: string, purpose: OTPPurpose, fullName: string) {
-    const user = await this.prisma.user.findUnique({ where: { email } });
-    if (!user) throw new BadRequestException('User not found');
-
-    await this.prisma.otpCode.updateMany({
-      where: { userId: user.id, purpose, usedAt: null },
-      data: { usedAt: new Date() },
+  async registerAdmin(registerDto: RegisterDto) {
+    const existing = await this.prisma.user.findUnique({
+      where: { email: registerDto.email },
+      select: { id: true, role: true },
     });
 
-    const otp = generateOtpCode(6);
-    const codeHash = await hashValue(otp);
+    const passwordHash = await hashValue(registerDto.password);
+    const dob = new Date(`${registerDto.dob}T00:00:00.000Z`);
 
-    await this.prisma.otpCode.create({
-      data: {
-        userId: user.id,
-        purpose,
-        codeHash,
-        expiresAt: this.otpExpiresAt(),
-      },
-    });
+    let user: { id: string; email: string };
 
-    const subject =
-      purpose === OTPPurpose.VERIFICATION ? 'Verify you account' : 'Reset your password';
+    if (!existing) {
+      // Case 1: not on the system -> create as ADMIN
+      user = await this.prisma.user.create({
+        data: {
+          firstName: registerDto.firstName,
+          lastName: registerDto.lastName,
+          email: registerDto.email,
+          dob,
+          gender: registerDto.gender,
+          phone: registerDto.phone,
+          password: passwordHash,
+          role: Role.ADMIN,
+          profile: { create: {} },
+          kyc: { create: {} },
+        },
+        select: { id: true, email: true },
+      });
+    } else {
+      // Case 2: already on the system -> upgrade to ADMIN
+      if (existing.role === Role.ADMIN) {
+        throw new BadRequestException('User is already an admin');
+      }
 
-    const otpMinutes = Number(this.config.get<string>('OTP_EXPIRES_MINUTES') || '10');
-    const html =
-      purpose === OTPPurpose.VERIFICATION
-        ? verificationOtpTemplate(otp, otpMinutes, fullName)
-        : resetPasswordOtpTemplate(otp, otpMinutes, fullName);
-
-    try {
-      await this.mail.send(user.email, subject, html);
-    } catch (err: unknown) {
-      const errorLog =
-        err instanceof Error ? (err.stack ?? err.message) : JSON.stringify(err);
-      this.logger?.error?.('OTP email failed', errorLog);
-
-      throw this.mailErrorMapper.map(err);
+      // IMPORTANT:
+      // Decide if you want to overwrite profile fields + password or not.
+      // Below: we upgrade role + optionally update details.
+      user = await this.prisma.user.update({
+        where: { id: existing.id },
+        data: {
+          role: Role.ADMIN,
+          // optional updates (only if you want admin registration to refresh these)
+          firstName: registerDto.firstName,
+          lastName: registerDto.lastName,
+          dob,
+          gender: registerDto.gender,
+          phone: registerDto.phone,
+          password: passwordHash,
+          // create these only if they don't exist
+          profile: { connectOrCreate: { where: { userId: existing.id }, create: {} } },
+          kyc: { connectOrCreate: { where: { userId: existing.id }, create: {} } },
+        },
+        select: { id: true, email: true },
+      });
     }
 
-    return { message: 'OTP Sent' };
-  }
+    const fullName = `${registerDto.firstName} ${registerDto.lastName}`;
 
-  private async consumeOtp(email: string, purpose: OTPPurpose, otp: string) {
-    const user = await this.prisma.user.findUnique({ where: { email } });
-    if (!user) throw new BadRequestException('User not found');
+    await this.otpService.sendOtp(registerDto.email, OTPPurpose.VERIFICATION, {
+      subject: 'Verify your email',
+      buildHtml: (args) => verificationOtpTemplate(args.otp, args.expiryMinutes, fullName),
+    });
 
-    const record = await this.prisma.otpCode.findFirst({
-      where: {
+    await this.authEventsQueue.add(
+      AuthJobName.USER_REGISTERED,
+      {
         userId: user.id,
-        purpose,
-        usedAt: null,
-        expiresAt: { gt: new Date() },
+        email: user.email,
+        fullName,
+        timestamp: new Date().toISOString(),
       },
-      orderBy: { createdAt: 'desc' },
-    });
+      {
+        removeOnComplete: true,
+        attempts: 5,
+      },
+    );
 
-    if (!record) throw new BadRequestException('Invalid or expired OTP');
-
-    const ok = await verifyHash(otp, record.codeHash);
-    if (!ok) throw new BadRequestException('Invalid or expired OTP');
-
-    await this.prisma.otpCode.update({
-      where: { id: record.id },
-      data: { usedAt: new Date() },
-    });
-
-    return user;
+    return { message: 'Registered/Upgraded, OTP sent to mail', userId: user.id };
   }
 
   async resendVerificationOtp(email: string) {
@@ -183,21 +251,10 @@ export class AuthService {
     if (user.isVerified) throw new BadRequestException('Email already verified');
 
     const fullName = `${user.firstName} ${user.lastName}`;
-    await this.sendOtp(email, OTPPurpose.VERIFICATION, fullName);
-
-    // const cooldownSeconds = 60;
-    // const last = await this.prisma.otpCode.findFirst({
-    //   where: { userId: user.id, purpose: OTPPurpose.VERIFICATION },
-    //   orderBy: { createdAt: 'desc' },
-    //   select: { createdAt: true },
-    // });
-
-    // if (last) {
-    //   const elasped = (Date.now() - new Date(last.createdAt).getTime()) / 1000;
-    //   if (elasped < cooldownSeconds) {
-    //     throw new TooManyRequestsException('Wait 30 seconds then try again');
-    //   }
-    // }
+    await this.otpService.sendOtp(email, OTPPurpose.VERIFICATION, {
+      subject: 'Verify your email',
+      buildHtml: (args) => verificationOtpTemplate(args.otp, args.expiryMinutes, fullName),
+    });
   }
 
   async resendResetPasswordOtp(email: string) {
@@ -211,25 +268,14 @@ export class AuthService {
     if (user.isVerified) throw new BadRequestException('Email already verified');
 
     const fullName = `${user.firstName} ${user.lastName}`;
-    await this.sendOtp(email, OTPPurpose.RESET_PASSWORD, fullName);
-
-    // const cooldownSeconds = 60;
-    // const last = await this.prisma.otpCode.findFirst({
-    //   where: { userId: user.id, purpose: OTPPurpose.VERIFICATION },
-    //   orderBy: { createdAt: 'desc' },
-    //   select: { createdAt: true },
-    // });
-
-    // if (last) {
-    //   const elasped = (Date.now() - new Date(last.createdAt).getTime()) / 1000;
-    //   if (elasped < cooldownSeconds) {
-    //     throw new TooManyRequestsException('Wait 30 seconds then try again');
-    //   }
-    // }
+    await this.otpService.sendOtp(email, OTPPurpose.RESET_PASSWORD, {
+      subject: 'Reset your password',
+      buildHtml: (args) => resetPasswordOtpTemplate(args.otp, args.expiryMinutes, fullName),
+    });
   }
 
   async verifyEmail(verifyEmailDto: VerifyEmailDto) {
-    const user = await this.consumeOtp(
+    const user = await this.otpService.consumeOtp(
       verifyEmailDto.email,
       OTPPurpose.VERIFICATION,
       verifyEmailDto.otp,
@@ -239,6 +285,20 @@ export class AuthService {
       where: { id: user.id },
       data: { isVerified: true },
     });
+
+    await this.authEventsQueue.add(
+      AuthJobName.EMAIL_VERIFIED,
+      {
+        userId: user.id,
+        email: user.email,
+        fullName: `${user.firstName} ${user.lastName}`,
+        timestamp: new Date().toISOString(),
+      },
+      {
+        removeOnComplete: true,
+        attempts: 5,
+      },
+    );
 
     return { message: 'email verified' };
   }
@@ -281,14 +341,17 @@ export class AuthService {
 
     if (user) {
       const fullName = `${user.firstName} ${user.lastName}`;
-      await this.sendOtp(forgotPasswordDto.email, OTPPurpose.RESET_PASSWORD, fullName);
+      await this.otpService.sendOtp(forgotPasswordDto.email, OTPPurpose.RESET_PASSWORD, {
+        subject: 'Reset your password',
+        buildHtml: (args) => resetPasswordOtpTemplate(args.otp, args.expiryMinutes, fullName),
+      });
     }
 
     return { message: 'If the email exists, an OTP has been sent.' };
   }
 
   async resetPassword(resetPasswordDto: ResetPasswordDto) {
-    const user = await this.consumeOtp(
+    const user = await this.otpService.consumeOtp(
       resetPasswordDto.email,
       OTPPurpose.RESET_PASSWORD,
       resetPasswordDto.otp,
@@ -306,6 +369,20 @@ export class AuthService {
       where: { userId: user.id, revokedAt: null },
       data: { revokedAt: new Date() },
     });
+
+    await this.authEventsQueue.add(
+      AuthJobName.PASSWORD_RESET,
+      {
+        userId: user.id,
+        email: user.email,
+        fullName: `${user.firstName} ${user.lastName}`,
+        timestamp: new Date().toISOString(),
+      },
+      {
+        removeOnComplete: true,
+        attempts: 5,
+      },
+    );
 
     return { message: 'Password reset successful.' };
   }
@@ -329,6 +406,20 @@ export class AuthService {
       where: { userId: userId, revokedAt: null },
       data: { revokedAt: new Date() },
     });
+
+    await this.authEventsQueue.add(
+      AuthJobName.PASSWORD_CHANGED,
+      {
+        userId: user.id,
+        email: user.email,
+        fullName: `${user.firstName} ${user.lastName}`,
+        timestamp: new Date().toISOString(),
+      },
+      {
+        removeOnComplete: true,
+        attempts: 5,
+      },
+    );
 
     return { message: 'Password changed.' };
   }

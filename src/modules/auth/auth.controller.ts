@@ -57,6 +57,19 @@ export class AuthController {
     return this.auth.register(dto);
   }
 
+  @Post('register-admin')
+  @Throttle({ default: { ttl: 300_000, limit: 3 } })
+  @ApiOperation({
+    summary: 'Register a new admin user',
+    description: 'Register a new admin user and send verification OTP',
+  })
+  @ApiAcceptedResponse({ type: RegistrationSuccessfulDto })
+  @ApiConflictResponse({ description: 'User already esists' })
+  @ApiBadRequestResponse({ description: 'Invalid imput' })
+  async registerAdmin(@Body() dto: RegisterDto) {
+    return this.auth.registerAdmin(dto);
+  }
+
   @Post('verify-email')
   @HttpCode(HttpStatus.OK)
   @Throttle({ default: { ttl: 60000, limit: 5 } })
@@ -109,6 +122,20 @@ export class AuthController {
   async logout(@Request() req: AuthRequest, @Body() dto: LogoutDto) {
     if (!dto?.refreshToken) throw new BadRequestException('refreshToken is required');
     return this.auth.logout(req.user.userId, dto.refreshToken);
+  }
+
+  @Post('refresh')
+  @HttpCode(HttpStatus.OK)
+  @Throttle({ default: { ttl: 600_000, limit: 10 } })
+  @ApiOperation({
+    summary: 'Refresh tokens',
+    description: 'Exchange a valid refresh token for a new access + refresh token pair',
+  })
+  @ApiBody({ type: LogoutDto })
+  @ApiOkResponse({ description: 'New token pair issued' })
+  @ApiUnauthorizedResponse({ description: 'Invalid or expired refresh token' })
+  async refresh(@Body() dto: LogoutDto) {
+    return this.auth.refreshTokens(dto.refreshToken);
   }
 
   @Post('forget-password')

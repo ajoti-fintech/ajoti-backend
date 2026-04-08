@@ -1,5 +1,11 @@
 // src/modules/funding/funding.service.ts
-import { Injectable, BadRequestException, Logger } from '@nestjs/common';
+import {
+  Injectable,
+  BadRequestException,
+  ForbiddenException,
+  Logger,
+  NotFoundException,
+} from '@nestjs/common';
 import * as crypto from 'crypto';
 import { AxiosError } from 'axios';
 import { WalletService } from '../wallet/wallet.service';
@@ -138,9 +144,57 @@ export class FundingService {
         icon: 'phone',
         fee: 0,
         minAmount: 10000,
-        description: 'Use your bank\'s USSD code. No internet required.',
+        description: "Use your bank's USSD code. No internet required.",
       },
     ];
+  }
+
+  /**
+   * Called by the frontend immediately after Flutterwave redirects the user back.
+   * Verifies the payment with Flutterwave on-demand and credits the wallet if successful.
+   * Ownership is enforced — users can only verify their own transactions.
+   */
+  async verifyFunding(
+    userId: string,
+    reference: string,
+  ): Promise<{ status: 'success' | 'pending' | 'failed'; message: string }> {
+    const transaction = await this.prisma.transaction.findUnique({
+      where: { reference },
+      include: { wallet: true },
+    });
+
+    if (!transaction) throw new NotFoundException('Transaction not found');
+    if (transaction.wallet.userId !== userId) {
+      throw new ForbiddenException('Access denied');
+    }
+
+    if (transaction.status === 'SUCCESS') {
+      return { status: 'success', message: 'Payment already confirmed' };
+    }
+
+    if (transaction.status === 'FAILED') {
+      return { status: 'failed', message: 'Payment was unsuccessful' };
+    }
+
+    // Still PENDING — trigger on-demand reconciliation
+    const result = await this.fundingReconciliationScheduler.reconcileByReference(
+      reference,
+      userId,
+    );
+
+    if (result.outcome === 'settled' || result.outcome === 'already_processed') {
+      return { status: 'success', message: 'Payment confirmed and wallet credited' };
+    }
+
+    if (result.outcome === 'marked_failed') {
+      return { status: 'failed', message: 'Payment could not be verified' };
+    }
+
+    if (result.outcome === 'still_pending') {
+      return { status: 'pending', message: 'Payment is still being processed by the provider' };
+    }
+
+    return { status: 'pending', message: 'Verification in progress' };
   }
 
   async manualReconcileByReference(

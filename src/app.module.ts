@@ -17,13 +17,16 @@ import { PayoutModule } from './modules/payout/payout.module';
 import { TrustModule } from './modules/trust/trust.module';
 import { TransactionsModule } from './modules/transactions/transactions.module';
 import { FundingModule } from './modules/funding/funding.module';
+// import { KafkaModule } from './modules/kafka/kafka.module';
+import { NotificationModule } from './modules/notification/notification.module';
 import { WithdrawalModule } from './modules/withdrawal/withdrawal.module';
 import { VirtualAccountModule } from './modules/virtual-accounts/virtual-account.module'; // ← NEW
-import { PrismaModule } from './prisma';
-import { HealthModule } from './modules/health';
-import { LoggerMiddleware } from './common';
-import { appConfig } from './config';
-import { flutterwaveConfig } from './config/flutterwave.config';
+import { OtpModule } from './modules/otp/otp.module';
+import { CreditModule } from './modules/credit/credit.module';
+import { LoanModule } from './modules/loans/loans.module';
+import redisConfig from './config/redis.config';
+import { BullModule } from '@nestjs/bullmq';
+import { ThrottlerStorageRedisService } from 'nestjs-throttler-storage-redis';
 
 const ENV = process.env.NODE_ENV || 'development';
 
@@ -31,24 +34,53 @@ const ENV = process.env.NODE_ENV || 'development';
   imports: [
     ConfigModule.forRoot({
       isGlobal: true,
-      load: [appConfig, flutterwaveConfig], // ← flutterwaveConfig added
+      load: [appConfig, flutterwaveConfig, redisConfig], // ← flutterwaveConfig added
       envFilePath: [`.env.${ENV}.local`, `.env.${ENV}`, '.env.local', '.env'],
     }),
 
     ScheduleModule.forRoot(),
 
-    ThrottlerModule.forRootAsync({
+    // Inside AppModule imports...
+
+    BullModule.forRootAsync({
+      imports: [ConfigModule],
       inject: [ConfigService],
-      useFactory: (config: ConfigService) => ({
-        throttlers: [
-          {
-            name: 'default',
-            ttl: config.get<number>('THROTTLE_TTL', 60_000),
-            limit: config.get<number>('THROTTLE_LIMIT', 100),
-          },
-        ],
-        // storage: new ThrottlerStorageRedisService(redisClient),
-      }),
+      useFactory: (config: ConfigService) => {
+        const redisUrl = config.get('REDIS_URL');
+        return {
+          connection: redisUrl
+            ? { url: redisUrl } // Use full string on Render
+            : {
+                host: config.get('REDIS_HOST', 'localhost'),
+                port: config.get<number>('REDIS_PORT', 6379),
+                password: config.get('REDIS_PASSWORD'),
+              },
+          maxRetriesPerRequest: null, // This fixes the 'MaxRetriesPerRequestError'
+        };
+      },
+    }),
+
+    ThrottlerModule.forRootAsync({
+      imports: [ConfigModule],
+      inject: [ConfigService],
+      useFactory: (config: ConfigService) => {
+        const redisUrl = config.get('REDIS_URL');
+        return {
+          throttlers: [
+            {
+              ttl: config.get('THROTTLE_TTL', 60000),
+              limit: config.get('THROTTLE_LIMIT', 100),
+            },
+          ],
+          // Fix: Use the URL string directly for the Throttler storage
+          storage: redisUrl
+            ? new ThrottlerStorageRedisService(redisUrl)
+            : new ThrottlerStorageRedisService({
+                host: config.get('REDIS_HOST', 'localhost'),
+                port: config.get('REDIS_PORT', 6379),
+              }),
+        };
+      },
     }),
 
     PrismaModule,
@@ -65,8 +97,13 @@ const ENV = process.env.NODE_ENV || 'development';
     TrustModule,
     TransactionsModule,
     FundingModule,
+    // KafkaModule,
+    NotificationModule,
     WithdrawalModule,
     VirtualAccountModule,
+    OtpModule,
+    CreditModule,
+    LoanModule,
   ],
   providers: [
     AppService,

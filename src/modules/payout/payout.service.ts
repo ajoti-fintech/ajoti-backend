@@ -1,6 +1,10 @@
 // src/modules/payout/payout.service.ts
-import { Injectable, BadRequestException, NotFoundException } from '@nestjs/common';
+import { Injectable, BadRequestException, NotFoundException, Logger } from '@nestjs/common';
 import * as crypto from 'crypto';
+import { InjectQueue } from '@nestjs/bullmq';
+import { Queue } from 'bullmq';
+import { AUTH_EVENTS_QUEUE, AuthJobName } from '../auth/auth.events';
+import { LoanService } from '../loans/loans.service';
 import {
   Prisma,
   EntryType,
@@ -30,10 +34,14 @@ import { ReversePayoutDto } from './dto/payout.dto';
  */
 @Injectable()
 export class PayoutService {
+  private readonly logger = new Logger(PayoutService.name);
+
   constructor(
     private prisma: PrismaService,
     private ledger: LedgerService,
-  ) { }
+    private loanService: LoanService,
+    @InjectQueue(AUTH_EVENTS_QUEUE) private readonly authEventsQueue: Queue,
+  ) {}
 
   /**
    * PROCESS PAYOUT — Rules R1, R5, R7, R10
@@ -44,7 +52,7 @@ export class PayoutService {
    *   2. CREDIT (MAIN) on recipient wallet    — pot arrives for winner
    */
   async processPayout(circleId: string, cycleNumber: number): Promise<PayoutResult> {
-    return this.prisma.$transaction(
+    const result = await this.prisma.$transaction<PayoutResult>(
       async (tx) => {
         // ── 1. Fetch & validate circle + schedule ──────────────────────────
         const circle = await tx.roscaCircle.findUnique({
@@ -111,6 +119,14 @@ export class PayoutService {
         const payoutId = crypto.randomUUID();
         const internalRef = `PAYOUT-${crypto.randomUUID()}`;
 
+        // ── 4b. Loan deduction — net out any active loan for this recipient ─
+        const { netPayout, loanRepaid } = await this.loanService.processLoanRepaymentInTx(
+          recipientId,
+          circleId,
+          totalPot,
+          tx,
+        );
+
         // ── 5. Ledger movements ────────────────────────────────────────────
         //
         // DEBIT the pool wallet — BucketType.MAIN (required by LedgerService)
@@ -132,7 +148,7 @@ export class PayoutService {
         );
 
         // CREDIT the recipient wallet — BucketType.MAIN (required by LedgerService)
-        // Winner receives into their spendable MAIN balance.
+        // Winner receives netPayout (totalPot minus any loan deduction + company fee).
         //
         const recipientCreditEntry = await this.ledger.writeEntry(
           {
@@ -140,11 +156,19 @@ export class PayoutService {
             entryType: EntryType.CREDIT,
             movementType: MovementType.TRANSFER,
             bucketType: BucketType.MAIN, // ← MUST be MAIN for CREDIT
-            amount: totalPot,
+            amount: netPayout,
             reference: internalRef,
             sourceType: LedgerSourceType.ROSCA_CIRCLE,
             sourceId: payoutId,
-            metadata: { circleId, cycleNumber },
+            metadata: {
+              circleId,
+              cycleNumber,
+              ...(loanRepaid && {
+                loanRepaid: true,
+                grossPayout: totalPot.toString(),
+                netPayout: netPayout.toString(),
+              }),
+            },
           },
           tx,
         );
@@ -156,7 +180,7 @@ export class PayoutService {
             circleId,
             scheduleId: schedule.id,
             recipientId,
-            amount: totalPot,
+            amount: netPayout, // net amount the recipient actually received
             status: PayoutStatus.COMPLETED,
             internalReference: internalRef,
             poolDebitId: poolDebitEntry.id,
@@ -187,6 +211,11 @@ export class PayoutService {
       },
       { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
     );
+
+    // Notify the winner AFTER the DB transaction commits.
+    await this.enqueueTransactionEvent(result.recipientId, BigInt(result.amount), result.payoutId);
+
+    return result;
   }
 
   /**
@@ -432,5 +461,41 @@ export class PayoutService {
         },
       },
     });
+  }
+
+  /**
+   * Enqueue a wallet.transaction.completed notification for the payout recipient.
+   * Notification failure must never surface to the caller — payouts are already committed.
+   */
+  private async enqueueTransactionEvent(
+    userId: string,
+    amountKobo: bigint,
+    payoutId: string,
+  ): Promise<void> {
+    try {
+      const user = await this.prisma.user.findUnique({
+        where: { id: userId },
+        select: { email: true, firstName: true, lastName: true },
+      });
+
+      if (!user) return;
+
+      await this.authEventsQueue.add(
+        AuthJobName.WALLET_TRANSACTION_COMPLETED,
+        {
+          userId,
+          email: user.email,
+          fullName: `${user.firstName} ${user.lastName}`,
+          type: 'CREDIT',
+          amount: Number(amountKobo) / 100, // kobo → NGN
+          currency: 'NGN',
+          reference: `PAYOUT-${payoutId}`,
+          timestamp: new Date().toISOString(),
+        },
+        { removeOnComplete: true, attempts: 3 },
+      );
+    } catch (err) {
+      this.logger.error(`Failed to enqueue payout notification for userId=${userId}`, err);
+    }
   }
 }

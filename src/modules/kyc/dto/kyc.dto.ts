@@ -1,5 +1,14 @@
 import { ApiProperty } from '@nestjs/swagger';
-import { IsNotEmpty, IsString, Length, Matches, MinLength } from 'class-validator';
+import {
+  IsNotEmpty,
+  IsOptional,
+  IsString,
+  Length,
+  Matches,
+  MinLength,
+  IsEnum,
+} from 'class-validator';
+import { GovernmentIdType, ProofOfAddressType } from '@prisma/client';
 
 export class VerifyNinDto {
   @ApiProperty({ example: '23456789012' })
@@ -91,16 +100,81 @@ export class ReviewKycDto {
   rejectionReason?: string;
 }
 
+export class VerifyAddressDto {
+  @ApiProperty({ example: '12, Allen Avenue' })
+  @IsString()
+  @IsNotEmpty()
+  address: string;
+
+  @ApiProperty({ example: 'Ikeja' })
+  @IsString()
+  @IsNotEmpty()
+  city: string;
+
+  @ApiProperty({ example: 'Lagos' })
+  @IsString()
+  @IsNotEmpty()
+  state: string;
+
+  @ApiProperty({ required: false })
+  @IsOptional()
+  @IsString()
+  lga?: string;
+
+  @ApiProperty({ example: 'Nigeria' })
+  @IsString()
+  @IsNotEmpty()
+  country: string;
+}
+
+export class VerifyPhotoDto {
+  @ApiProperty({ enum: GovernmentIdType, example: GovernmentIdType.DRIVERS_LICENSE })
+  @IsEnum(GovernmentIdType)
+  governmentIdType: GovernmentIdType;
+
+  // Optional if you don’t always need the back side
+  @ApiProperty({
+    required: false,
+    description: 'Set true if you want to enforce back image upload',
+  })
+  @IsOptional()
+  @IsString()
+  requireBack?: string; // "true" | "false"
+}
+
+export class VerifyProofOfAddressDto {
+  @ApiProperty({ enum: ProofOfAddressType, example: ProofOfAddressType.UTILITY_BILL })
+  @IsEnum(ProofOfAddressType)
+  proofOfAddressType: ProofOfAddressType;
+}
+
 export class KycResponseDto {
   id: string;
   userId: string;
   status: string;
   step: string;
+
   nin?: string;
   bvn?: string;
+
   nextOfKinName?: string;
   nextOfKinRelationship?: string;
   nextOfKinPhone?: string;
+
+  address?: string;
+  city?: string;
+  state?: string;
+  lga?: string;
+  country?: string;
+
+  selfieUrl?: string;
+  governmentIdType?: GovernmentIdType;
+  governmentIdFrontUrl?: string;
+  governmentIdBackUrl?: string;
+
+  proofOfAddressType?: ProofOfAddressType;
+  proofOfAddressUrl?: string;
+
   ninVerifiedAt?: Date;
   bvnVerifiedAt?: Date;
   submittedAt?: Date;

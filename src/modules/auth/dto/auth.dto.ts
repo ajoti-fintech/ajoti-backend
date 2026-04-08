@@ -1,5 +1,5 @@
 import { ApiProperty } from '@nestjs/swagger';
-import { Gender } from '@prisma/client';
+import { Gender, Role } from '@prisma/client';
 import {
   IsEmail,
   IsNotEmpty,
@@ -11,6 +11,7 @@ import {
   IsDateString,
   IsIn,
   IsOptional,
+  IsEnum,
 } from 'class-validator';
 
 export class RegisterDto {
@@ -60,8 +61,20 @@ export class RegisterDto {
   // @Matches(/^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[@$!%*?&])[A-Za-z\d@$!%*?&]{8,}$/, { message: "Password must contain at least one uppercase letter, one lowercase letter, one number, and one special character" })
   @IsNotEmpty()
   readonly password: string;
+
+  @ApiProperty({ example: 'MEMBER', enum: Role })
+  @IsNotEmpty()
+  @IsEnum(Role) // Use IsEnum to validate against your actual Role enum
+  @IsIn([Role.MEMBER, Role.ADMIN, Role.SUPERADMIN])
+  readonly role: Role;
 }
 
+export class RoleDto {
+  @ApiProperty({ example: 'MEMBER', enum: Role })
+  @IsNotEmpty()
+  @IsIn([Role.MEMBER, Role.ADMIN, Role.SUPERADMIN])
+  readonly role: Role;
+}
 export class OAuthPasswordFormDto {
   @ApiProperty({ example: 'password', enum: ['password'] })
   @IsString()

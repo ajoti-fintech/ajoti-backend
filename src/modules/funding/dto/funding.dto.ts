@@ -13,7 +13,7 @@ import {
 
 export class InitializeFundingDto {
   @ApiProperty({
-    example: 50000,
+    example: 500000,
     description: 'Amount in kobo (smallest unit, e.g. 50000 = ₦500)',
     minimum: 100,
     maximum: 1000000000,

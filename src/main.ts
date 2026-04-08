@@ -1,15 +1,32 @@
 /* eslint-disable prettier/prettier */
 import { NestFactory, Reflector } from '@nestjs/core';
-import { ValidationPipe, Logger, ClassSerializerInterceptor, RawBody } from '@nestjs/common';
+import { ValidationPipe, Logger, ClassSerializerInterceptor } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { AppModule } from './app.module';
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
 import { NestExpressApplication } from '@nestjs/platform-express';
+import { Transport } from '@nestjs/microservices';
+import { join } from 'path';
+
 
 async function bootstrap() {
   const app = await NestFactory.create<NestExpressApplication>(AppModule);
   const configService = app.get(ConfigService);
   const logger = new Logger('Bootstrap');
+
+  // Kafka microservice setup
+  // app.connectMicroservice({
+  //   transport: Transport.KAFKA,
+  //   options: {
+  //     client: {
+  //       clientId: configService.get<string>('KAFKA_CLIENT_ID', 'ajoti-api'),
+  //       brokers: [configService.get<string>('KAFKA_BROKERS', 'kafka:29092')],
+  //     },
+  //     consumer: {
+  //       groupId: configService.get<string>('KAFKA_GROUP_ID', 'ajoti-consumer'),
+  //     },
+  //   },
+  // });
 
   app.useBodyParser('json', {
     verify: (req: any, _res: any, buf: Buffer) => {
@@ -18,7 +35,7 @@ async function bootstrap() {
       }
     },
   });
-  
+
   // Global validation pipe
   app.useGlobalPipes(
     new ValidationPipe({
@@ -39,6 +56,10 @@ async function bootstrap() {
   app.setGlobalPrefix('api', {
     exclude: ['health'],
   });
+
+  app.useStaticAssets(join(process.cwd(), 'uploads'), {
+    prefix: '/uploads'
+  })
 
   const options = new DocumentBuilder()
     .setTitle('Ajoti Backend API')
@@ -70,6 +91,11 @@ async function bootstrap() {
       }
     },
   });
+
+  // Start the Kafka microservice
+  // await app.startAllMicroservices();
+  // logger.log('Kafka microservice started');
+
   await app.listen(port);
 
   logger.log(`Application is running on: http://localhost:${port}`);

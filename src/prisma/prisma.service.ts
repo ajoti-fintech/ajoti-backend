@@ -15,6 +15,12 @@ export class PrismaService extends PrismaClient implements OnModuleInit, OnModul
   private readonly pool: Pool;
 
   constructor() {
+    const connectionString = process.env.DATABASE_URL;
+
+    if (!connectionString) {
+      throw new Error('DATABASE_URL is not set');
+    }
+
     const pool = new Pool({
       connectionString: process.env.DATABASE_URL,
       // Defaults tuned for managed Postgres providers (e.g. Neon).
@@ -47,6 +53,7 @@ export class PrismaService extends PrismaClient implements OnModuleInit, OnModul
 
   async onModuleInit() {
     await this.$connect();
+    this.logger.log('Prisma connected');
   }
 
   async onModuleDestroy() {

@@ -456,19 +456,30 @@ model UserTrustStats {
   id     String @id @default(uuid())
   userId String @unique @map("user_id")
 
-  trustScore     Int   @default(50) // 0-100, ATI-computed
-  completionRate Float @default(0)  // % of completed cycles
+  trustScore              Int   @default(50) // 0-100, ATI-computed
+  completionRate          Float @default(0)  // % of completed cycles
+  totalRoscasJoined       Int   @default(0) @map("total_roscas_joined")
+  totalRoscasCompleted    Int   @default(0) @map("total_roscas_completed")
 
-  totalRoscasJoined    Int @default(0) @map("total_roscas_joined")
-  totalRoscasCompleted Int @default(0) @map("total_roscas_completed")
+  // ATI: Contribution counters (History Behavior component)
+  totalOnTimePayments     Int   @default(0) @map("total_on_time_payments")
+  totalLatePayments       Int   @default(0) @map("total_late_payments")   // paid but late (×0.5 penalty)
+  totalMissedPayments     Int   @default(0) @map("total_missed_payments") // never paid (×1.5 penalty)
+  totalDefaults           Int   @default(0) @map("total_defaults")        // abandoned cycle (×3 penalty)
+  totalExpectedPayments   Int   @default(0) @map("total_expected_payments")
+  consecutiveLatePayments Int   @default(0) @map("consecutive_late_payments")
 
-  // ATI: History Behavior component
-  totalOnTimePayments     Int @default(0) @map("total_on_time_payments")
-  totalLatePayments       Int @default(0) @map("total_late_payments")    // paid but late (×0.5 penalty)
-  totalMissedPayments     Int @default(0) @map("total_missed_payments")  // never paid (×1.5 penalty)
-  totalDefaults           Int @default(0) @map("total_defaults")         // abandoned cycle (×3 penalty)
-  totalExpectedPayments   Int @default(0) @map("total_expected_payments")
-  consecutiveLatePayments Int @default(0) @map("consecutive_late_payments")
+  // ATI: Recent Behavior component (last cycle only — reset each cycle)
+  onTimePaymentsLastCycle   Int @default(0) @map("on_time_payments_last_cycle")
+  expectedPaymentsLastCycle Int @default(0) @map("expected_payments_last_cycle")
+
+  // ATI: Payout Reliability component (post-payout payments)
+  postPayoutOnTimePayments   Int @default(0) @map("post_payout_on_time_payments")
+  expectedPostPayoutPayments Int @default(0) @map("expected_post_payout_payments")
+
+  // ATI: Peer Trust component
+  averagePeerRating Float @default(0) @map("average_peer_rating")
+  totalPeerRatings  Int   @default(0) @map("total_peer_ratings")
 
   // ATI: Recent Behavior component (last cycle only — reset each cycle)
   onTimePaymentsLastCycle   Int @default(0) @map("on_time_payments_last_cycle")
@@ -519,21 +530,19 @@ model AuditLog {
 // CREDIT SCORE & LOANS
 // ============================================================================
 
-// 9. Credit Scores — cached composite score per user
+// 9. CREDIT SCORES — Cached composite score per user
 model CreditScore {
   id     String @id @default(uuid())
   userId String @unique @map("user_id")
+  user   User   @relation(fields: [userId], references: [id])
 
   externalScore     Int @default(575) @map("external_score")      // 300–850 from bureau
   trustDisplayScore Int @default(575) @map("trust_display_score") // 300–850 from ATI
-  finalScore        Int @default(575) @map("final_score")         // Weighted composite
+  finalScore        Int @default(575) @map("final_score")         // weighted composite
 
   lastUpdated DateTime @default(now()) @map("last_updated")
   createdAt   DateTime @default(now()) @map("created_at")
   updatedAt   DateTime @updatedAt @map("updated_at")
-
-  // Relations
-  user User @relation(fields: [userId], references: [id])
 
   @@map("credit_scores")
 }
@@ -545,30 +554,28 @@ enum LoanStatus {
   CANCELLED // Cancelled before disbursement
 }
 
-// 10. Loans — advance on expected ROSCA payout
+// 10. LOANS — Advance on expected ROSCA payout
 model Loan {
   id       String      @id @default(uuid())
   userId   String      @map("user_id")
+  user     User        @relation(fields: [userId], references: [id])
   circleId String      @map("circle_id")
+  circle   RoscaCircle @relation(fields: [circleId], references: [id])
 
   // Amounts in kobo
-  payoutAmount BigInt @map("payout_amount") // Estimated full payout at application time
-  loanAmount   BigInt @map("loan_amount")   // Disbursed to user (payout × allowedPercent)
+  payoutAmount BigInt @map("payout_amount") // estimated full payout at application time
+  loanAmount   BigInt @map("loan_amount")   // disbursed to user (payout × allowedPercent)
   companyFee   BigInt @map("company_fee")   // 10% of payoutAmount retained at payout time
   finalPayout  BigInt @map("final_payout")  // payoutAmount - loanAmount - companyFee
 
-  creditScoreUsed Int @map("credit_score_used") // Snapshot of finalScore at application time
-  allowedPercent  Int @map("allowed_percent")   // Tier percentage (20/30/40/45/50)
+  creditScoreUsed Int @map("credit_score_used") // snapshot of finalScore at application time
+  allowedPercent  Int @map("allowed_percent")   // tier percentage (20/30/40/45/50)
 
   status LoanStatus @default(ACTIVE)
 
   createdAt DateTime  @default(now()) @map("created_at")
   repaidAt  DateTime? @map("repaid_at")
   updatedAt DateTime  @updatedAt @map("updated_at")
-
-  // Relations
-  user   User        @relation(fields: [userId], references: [id])
-  circle RoscaCircle @relation(fields: [circleId], references: [id])
 
   @@map("loans")
 }
@@ -587,6 +594,10 @@ enum OTPPurpose {
   VERIFICATION
   RESET_PASSWORD
   KYC_VERIFICATION
+
+  // Add more purposes as needed
+  // WITHDRAWAL_APPROVAL
+  // LOGIN_2FA
 }
 
 enum KYCStatus {
@@ -655,7 +666,13 @@ model User {
   roscaCycleSchedules RoscaCycleSchedule[]
   roscaContributions  RoscaContribution[]
   roscaPayouts        RoscaPayout[]
+  userTrustStats      UserTrustStats?
+  creditScore         CreditScore?
   loans               Loan[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
   notifications       Notification[]
 }
 
@@ -694,17 +711,18 @@ model KYC {
   lga     String? @db.VarChar(100)
   country String? @db.VarChar(100)
 
-  // Photo & Government ID
-  selfieUrl              String?          @db.Text
-  governmentIdType       GovernmentIdType?
-  governmentIdFrontUrl   String?          @db.Text
-  governmentIdBackUrl    String?          @db.Text
-  selfieUploadedAt       DateTime?
+  // Photo
+  selfieUrl String? @db.Text
+  governmentIdType GovernmentIdType?
+  governmentIdFrontUrl  String? @db.Text
+  governmentIdBackUrl   String? @db.Text
+
+  selfieUploadedAt DateTime?
   governmentIdUploadedAt DateTime?
 
   // Proof of Address
-  proofOfAddressType       ProofOfAddressType?
-  proofOfAddressUrl        String?             @db.Text
+  proofOfAddressType    ProofOfAddressType?
+  proofOfAddressUrl     String? @db.Text
   proofOfAddressUploadedAt DateTime?
   proofOfAddressVerifiedAt DateTime?
 
@@ -770,10 +788,7 @@ model SavedBankAccount {
   @@map("saved_bank_accounts")
 }
 
-// ============================================================================
-// NOTIFICATIONS & MAIL
-// ============================================================================
-
+// Notification
 enum NotificationType {
   EMAIL
   IN_APP
@@ -784,26 +799,24 @@ enum NotificationStatus {
   SENT
   FAILED
 }
-
 model Notification {
-  id     String @id @default(uuid())
-  userId String @map("user_id")
+  id        String   @id @default(uuid())
+  userId    String   @map("user_id")
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
 
-  type   NotificationType
-  title  String
-  body   String
-  status NotificationStatus @default(PENDING)
+  type      NotificationType
+  title     String
+  body      String
 
-  sentAt DateTime?
-  error  String?   // Populated on failure
+  status    NotificationStatus @default(PENDING)
+  sentAt  DateTime?
+  error String? // If failed
 
-  isRead Boolean   @default(false)
+  isRead Boolean @default(false)
   readAt DateTime?
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
-
-  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@index([userId, isRead])
   @@index([userId, createdAt])
@@ -816,16 +829,16 @@ enum MailJobStatus {
 }
 
 model MailOutbox {
-  id        String        @id @default(uuid())
+  id        String   @id @default(uuid())
   to        String
   subject   String
   html      String
   status    MailJobStatus @default(PENDING)
   attempts  Int           @default(0)
   lastError String?
-  sentAt    DateTime?
-  createdAt DateTime      @default(now())
-  updatedAt DateTime      @updatedAt
+  sentAt   DateTime?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
   @@index([status, attempts])
 }

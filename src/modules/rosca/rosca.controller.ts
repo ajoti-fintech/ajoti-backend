@@ -10,6 +10,7 @@ import {
   UseGuards,
   HttpCode,
   HttpStatus,
+  Delete,
 } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiResponse, ApiBearerAuth } from '@nestjs/swagger';
 import { RoscaService } from './rosca.service';
@@ -29,6 +30,7 @@ import {
   RoscaCycleScheduleResponseDto,
   formatScheduleResponse,
   UpdatePayoutConfigDto,
+  UpdateCircleDto,
 } from './dto/rosca.dto';
 import { Roles } from '../../common/decorators/roles.decorator';
 
@@ -49,6 +51,32 @@ export class RoscaController {
       success: true,
       message: 'Circles retrieved successfully',
       data: circles.map(formatCircleResponse),
+    };
+  }
+
+  @Get('my-participations')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Get all ROSCA circles the current user is a member of' })
+  @ApiResponse({ status: 200, type: [RoscaCircleResponseDto] })
+  async getMyParticipations(@CurrentUser('userId') userId: string) {
+    const circles = await this.roscaService.getUserParticipations(userId);
+    return {
+      success: true,
+      message: 'Your active participations retrieved successfully',
+      data: circles.map(formatCircleResponse),
+    };
+  }
+
+  @Get(':circleId')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Get detailed view of a specific ROSCA circle' })
+  @ApiResponse({ status: 200, type: RoscaCircleResponseDto })
+  async getCircle(@Param('circleId') circleId: string, @CurrentUser('userId') userId: string) {
+    const circle = await this.roscaService.getCircle(circleId, userId);
+    return {
+      success: true,
+      message: 'Circle details retrieved successfully',
+      data: formatCircleResponse(circle), // This should now include admin/creator info
     };
   }
 
@@ -77,6 +105,17 @@ export class RoscaController {
       data: schedules.map(formatScheduleResponse),
     };
   }
+
+  @Delete(':circleId/leave')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Leave a circle (before activation)' })
+  async leaveCircle(@Param('circleId') circleId: string, @CurrentUser('userId') userId: string) {
+    const result = await this.roscaService.leaveCircle(circleId, userId);
+    return {
+      success: true,
+      message: result.message,
+    };
+  }
 }
 
 // ────────────────────────────────────────────────
@@ -100,6 +139,43 @@ export class RoscaAdminController {
     return {
       success: true,
       message: 'Circle created successfully in DRAFT mode',
+      data: formatCircleResponse(circle),
+    };
+  }
+
+  @Get('my-circles')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: '[Admin] Get all ROSCA circles created by the current admin' })
+  @ApiResponse({ status: 200, type: [RoscaCircleResponseDto] })
+  async getMyAdminCircles(
+    @CurrentUser('userId') adminId: string,
+    @Query() query: AdminListCirclesQueryDto,
+  ) {
+    // Force the query to only look for circles belonging to this admin
+    const circles = await this.roscaService.adminListAllCircles({
+      ...query,
+      adminId,
+    });
+
+    return {
+      success: true,
+      message: 'Admin circles retrieved successfully',
+      data: circles.map(formatCircleResponse),
+    };
+  }
+
+  @Get(':circleId')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: '[Admin] Get full details of a specific ROSCA circle' })
+  @ApiResponse({ status: 200, type: RoscaCircleResponseDto })
+  async getCircleDetails(
+    @Param('circleId') circleId: string,
+    @CurrentUser('userId') adminId: string,
+  ) {
+    const circle = await this.roscaService.getCircleByIdForAdmin(circleId, adminId);
+    return {
+      success: true,
+      message: 'Circle details retrieved successfully',
       data: formatCircleResponse(circle),
     };
   }
@@ -133,6 +209,39 @@ export class RoscaAdminController {
     };
   }
 
+  @Patch(':circleId/members/:userId/reject')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Reject a member and release their collateral (Circle Admin only)' })
+  async rejectMember(
+    @Param('circleId') circleId: string,
+    @Param('userId') userId: string,
+    @CurrentUser('userId') adminId: string,
+  ) {
+    const membership = await this.roscaService.rejectMember(circleId, adminId, userId);
+    return {
+      success: true,
+      message: 'Member rejected and collateral released',
+      data: formatMembershipResponse(membership),
+    };
+  }
+
+  @Patch(':circleId')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: '[Admin] Update circle configuration (DRAFT only)' })
+  @ApiResponse({ status: 200, type: RoscaCircleResponseDto })
+  async updateCircle(
+    @Param('circleId') circleId: string,
+    @CurrentUser('userId') userId: string,
+    @Body() updateDto: UpdateCircleDto, // Use UpdateCircleDto here
+  ) {
+    const circle = await this.roscaService.updateCircle(circleId, userId, updateDto);
+    return {
+      success: true,
+      message: 'Circle updated successfully',
+      data: formatCircleResponse(circle),
+    };
+  }
+
   @Patch(':circleId/payout-config')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: '[Admin] Update payout logic or assign member positions' })
@@ -143,6 +252,19 @@ export class RoscaAdminController {
   ) {
     return await this.roscaService.updatePayoutConfiguration(circleId, adminId, dto);
   }
+}
+
+// ────────────────────────────────────────────────
+// SUPER ADMIN CONTROLLER - Explicitly Exported
+// ────────────────────────────────────────────────
+
+@ApiTags('ROSCA Super Admin')
+@Controller('superadmin/rosca')
+@UseGuards(JwtAuthGuard, RolesGuard)
+@Roles('SUPERADMIN')
+@ApiBearerAuth('access-token')
+export class RoscaSuperAdminController {
+  constructor(private readonly roscaService: RoscaService) {}
 
   @Get('all')
   @HttpCode(HttpStatus.OK)

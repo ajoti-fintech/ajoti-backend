@@ -1,9 +1,10 @@
-import { Body, Controller, Delete, HttpCode, HttpStatus, UseGuards } from '@nestjs/common';
+import { Body, Controller, Delete, Get, HttpCode, HttpStatus, UseGuards } from '@nestjs/common';
 import {
   ApiBadRequestResponse,
   ApiBearerAuth,
   ApiConflictResponse,
   ApiOperation,
+  ApiResponse,
   ApiServiceUnavailableResponse,
   ApiTags,
 } from '@nestjs/swagger';
@@ -11,6 +12,7 @@ import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { UsersService } from './users.service';
 import { DeleteUserAccountDto } from './dto/delete-user.dto';
+import { UserProfileResponseDto } from './dto/user-profile.dto';
 
 @ApiTags('Users')
 @Controller('users')
@@ -18,6 +20,23 @@ import { DeleteUserAccountDto } from './dto/delete-user.dto';
 @ApiBearerAuth('access-token')
 export class UsersController {
   constructor(private readonly usersService: UsersService) { }
+
+  @Get('me')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Get current user profile and account status' })
+  @ApiResponse({
+    status: 200,
+    description: 'User profile retrieved successfully',
+    type: UserProfileResponseDto,
+  })
+  async getMyProfile(@CurrentUser('userId') userId: string) {
+    const user = await this.usersService.findById(userId);
+    return {
+      success: true,
+      message: 'Profile retrieved successfully',
+      data: user,
+    };
+  }
 
   @Delete('me')
   @HttpCode(HttpStatus.OK)
@@ -35,10 +54,7 @@ export class UsersController {
   @ApiServiceUnavailableResponse({
     description: 'Provider-side VA deletion failed.',
   })
-  async closeMyAccount(
-    @CurrentUser('userId') userId: string,
-    @Body() dto: DeleteUserAccountDto,
-  ) {
+  async closeMyAccount(@CurrentUser('userId') userId: string, @Body() dto: DeleteUserAccountDto) {
     const result = await this.usersService.closeAccount(userId, dto);
     return {
       success: true,

@@ -14,9 +14,13 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
+      kafka:
+        condition: service_healthy
     volumes:
       - ../:/app
       - /app/node_modules
+    networks:
+      - app-network
     command: >
       sh -c "
         npx prisma generate &&
@@ -24,4 +28,3 @@ services:
         pnpm exec ts-node prisma/seed.ts &&
         pnpm run start:dev
       "
-
