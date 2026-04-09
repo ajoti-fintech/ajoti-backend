@@ -40,7 +40,10 @@ describe('LedgerService', () => {
   describe('writeEntry (Arithmetic & Causality)', () => {
     it('should correctly calculate balanceAfter on a CREDIT', async () => {
       // Setup: Initial balance is 1000 kobo (10 Naira)
-      mockPrisma.ledgerEntry.findFirst.mockResolvedValue({ balanceAfter: 1000n });
+      // First call: balance lookup. Second call: duplicate check (must return null).
+      mockPrisma.ledgerEntry.findFirst
+        .mockResolvedValueOnce({ balanceAfter: 1000n })
+        .mockResolvedValueOnce(null);
       mockPrisma.walletBucket.findMany.mockResolvedValue([]);
 
       const params = {
@@ -65,7 +68,9 @@ describe('LedgerService', () => {
 
     it('should correctly calculate balanceAfter on a DEBIT', async () => {
       // Setup: Initial balance 2000, No reservations
-      mockPrisma.ledgerEntry.findFirst.mockResolvedValue({ balanceAfter: 2000n });
+      mockPrisma.ledgerEntry.findFirst
+        .mockResolvedValueOnce({ balanceAfter: 2000n })
+        .mockResolvedValueOnce(null);
       mockPrisma.walletBucket.findMany.mockResolvedValue([]);
 
       const params = {
@@ -90,7 +95,9 @@ describe('LedgerService', () => {
 
     it('should NOT change total balanceAfter on a RESERVE entry', async () => {
       // Setup: Initial balance 5000
-      mockPrisma.ledgerEntry.findFirst.mockResolvedValue({ balanceAfter: 5000n });
+      mockPrisma.ledgerEntry.findFirst
+        .mockResolvedValueOnce({ balanceAfter: 5000n })
+        .mockResolvedValueOnce(null);
       mockPrisma.walletBucket.findMany.mockResolvedValue([]);
 
       const params = {

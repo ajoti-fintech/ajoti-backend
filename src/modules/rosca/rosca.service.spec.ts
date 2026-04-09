@@ -1,165 +1,180 @@
-// import { Test, TestingModule } from '@nestjs/testing';
-// import { RoscaService } from './rosca.service';
-// import { LedgerService } from '../ledger/ledger.service';
-// import { PrismaService } from '../../prisma/prisma.service';
-// import {
-//   CircleStatus,
-//   MembershipStatus,
-//   SystemWalletType,
-//   EntryType,
-//   MovementType,
-//   LedgerSourceType,
-// } from '@prisma/client';
-// import { BadRequestException } from '@nestjs/common';
+import { Test, TestingModule } from '@nestjs/testing';
+import { RoscaService } from './rosca.service';
+import { LedgerService } from '../ledger/ledger.service';
+import { PrismaService } from '../../prisma/prisma.service';
+import {
+  CircleStatus,
+  MembershipStatus,
+  EntryType,
+  MovementType,
+  LedgerSourceType,
+  BucketType,
+} from '@prisma/client';
+import { BadRequestException, ConflictException, NotFoundException } from '@nestjs/common';
 
-// describe('RoscaService', () => {
-//   let service: RoscaService;
-//   let ledgerService: LedgerService;
-//   let prisma: PrismaService;
+describe('RoscaService', () => {
+  let service: RoscaService;
 
-//   const mockUserId = 'user-uuid';
-//   const mockCircleId = 'circle-uuid';
-//   const mockWalletId = 'wallet-uuid';
-//   const mockPoolWalletId = 'pool-wallet-uuid';
+  const mockLedgerService = {
+    writeEntry: jest.fn().mockResolvedValue({ id: 'mock-ledger-entry-id' }),
+  };
 
-//   const mockLedgerService = {
-//     writeEntry: jest.fn().mockResolvedValue({ id: 'mock-ledger-entry-id' }),
-//   };
+  const mockPrisma: any = {
+    roscaCircle: { findUnique: jest.fn(), update: jest.fn(), create: jest.fn(), findFirst: jest.fn(), findMany: jest.fn() },
+    roscaMembership: { findUnique: jest.fn(), update: jest.fn(), create: jest.fn(), count: jest.fn(), findMany: jest.fn(), delete: jest.fn() },
+    roscaContribution: { findUnique: jest.fn(), create: jest.fn() },
+    roscaCycleSchedule: { createMany: jest.fn(), findMany: jest.fn(), findFirst: jest.fn() },
+    wallet: { findUnique: jest.fn() },
+    user: { findUnique: jest.fn() },
+    auditLog: { create: jest.fn() },
+  };
+  mockPrisma.$transaction = jest.fn().mockImplementation((cb) => cb(mockPrisma));
 
-//   // 1. Define the mock with an explicit 'any' type to stop the circular inference
-//   const mockPrismaService: any = {
-//     roscaCircle: {
-//       findUnique: jest.fn(),
-//       update: jest.fn(),
-//       create: jest.fn(),
-//     },
-//     roscaMembership: {
-//       findUnique: jest.fn(),
-//       update: jest.fn(),
-//       create: jest.fn(),
-//     },
-//     roscaContribution: {
-//       findUnique: jest.fn(),
-//       create: jest.fn(),
-//     },
-//     systemWallet: {
-//       findUnique: jest.fn(),
-//     },
-//     wallet: {
-//       findUnique: jest.fn(),
-//     },
-//     userTrustStats: {
-//       upsert: jest.fn(),
-//       update: jest.fn(),
-//     },
-//     auditLog: {
-//       create: jest.fn(),
-//     },
-//     roscaCycleSchedule: {
-//       createMany: jest.fn(),
-//     },
-//   };
+  beforeEach(async () => {
+    const module: TestingModule = await Test.createTestingModule({
+      providers: [
+        RoscaService,
+        { provide: LedgerService, useValue: mockLedgerService },
+        { provide: PrismaService, useValue: mockPrisma },
+      ],
+    }).compile();
 
-//   // 2. Assign the transaction mock AFTER the object is defined
-//   mockPrismaService.$transaction = jest.fn((callback) => callback(mockPrismaService));
+    service = module.get<RoscaService>(RoscaService);
+    jest.clearAllMocks();
+  });
 
-//   beforeEach(async () => {
-//     const module: TestingModule = await Test.createTestingModule({
-//       providers: [
-//         RoscaService,
-//         { provide: LedgerService, useValue: mockLedgerService },
-//         { provide: PrismaService, useValue: mockPrismaService },
-//       ],
-//     }).compile();
+  // ── requestToJoin ──────────────────────────────────────────────────────────
 
-//     service = module.get<RoscaService>(RoscaService);
-//     ledgerService = module.get<LedgerService>(LedgerService);
-//     prisma = module.get<PrismaService>(PrismaService);
+  describe('requestToJoin', () => {
+    const userId = 'user-1';
+    const circleId = 'circle-1';
 
-//     jest.clearAllMocks();
-//   });
+    const baseCircle = {
+      id: circleId,
+      status: CircleStatus.DRAFT,
+      contributionAmount: 500000n, // ₦5000
+      collateralPercentage: 10,
+      filledSlots: 3,
+      maxSlots: 10,
+    };
 
-//   describe('makeContribution (Rule R8)', () => {
-//     it('should transfer from participant to pool and NOT use WITHDRAWAL movement', async () => {
-//       // 1. Setup Mocks for an Active Circle/Member
-//       const contributionAmount = 50000n; // 500 Naira
+    it('should reserve 10% collateral on a successful join request', async () => {
+      mockPrisma.wallet.findUnique.mockResolvedValue({ id: 'wallet-1' });
+      mockPrisma.roscaCircle.findUnique.mockResolvedValue(baseCircle);
+      mockPrisma.roscaMembership.findUnique.mockResolvedValue(null);
+      mockPrisma.roscaMembership.create.mockResolvedValue({
+        id: 'mem-1', circleId, userId, status: MembershipStatus.PENDING, collateralAmount: 50000n,
+      });
 
-//       mockPrismaService.roscaCircle.findUnique.mockResolvedValue({
-//         id: mockCircleId,
-//         status: CircleStatus.ACTIVE,
-//         contributionAmount,
-//         latePenaltyPercent: 10,
-//         schedules: [{ contributionDeadline: new Date(Date.now() + 86400000) }], // Future deadline
-//       });
+      await service.requestToJoin(userId, circleId);
 
-//       mockPrismaService.roscaMembership.findUnique.mockResolvedValue({
-//         id: 'membership-uuid',
-//         status: MembershipStatus.ACTIVE,
-//       });
+      expect(mockLedgerService.writeEntry).toHaveBeenCalledWith(
+        expect.objectContaining({
+          entryType: EntryType.RESERVE,
+          bucketType: BucketType.ROSCA,
+          amount: 50000n, // 10% of 500000
+          sourceType: LedgerSourceType.COLLATERAL_RESERVE,
+        }),
+        expect.anything(),
+      );
+    });
 
-//       mockPrismaService.systemWallet.findUnique.mockResolvedValue({
-//         walletId: mockPoolWalletId,
-//       });
+    it('should throw ConflictException if already a member', async () => {
+      mockPrisma.wallet.findUnique.mockResolvedValue({ id: 'wallet-1' });
+      mockPrisma.roscaCircle.findUnique.mockResolvedValue(baseCircle);
+      mockPrisma.roscaMembership.findUnique.mockResolvedValue({ id: 'existing-mem' });
 
-//       mockPrismaService.wallet.findUnique.mockResolvedValue({ id: mockWalletId });
-//       mockPrismaService.roscaContribution.findUnique.mockResolvedValue(null);
-//       mockPrismaService.roscaContribution.create.mockResolvedValue({ id: 'contrib-uuid' });
-//       mockPrismaService.userTrustStats.upsert.mockResolvedValue({ trustScore: 50 });
+      await expect(service.requestToJoin(userId, circleId)).rejects.toThrow(ConflictException);
+    });
 
-//       // 2. Execute
-//       await service.makeContribution(mockUserId, mockCircleId, 1);
+    it('should throw BadRequestException if circle is full', async () => {
+      mockPrisma.wallet.findUnique.mockResolvedValue({ id: 'wallet-1' });
+      mockPrisma.roscaCircle.findUnique.mockResolvedValue({ ...baseCircle, filledSlots: 10 });
+      mockPrisma.roscaMembership.findUnique.mockResolvedValue(null);
 
-//       // 3. Assertions for Rule R8 (Internal Transfer)
-//       // Check first call: Participant Debit
-//       expect(mockLedgerService.writeEntry).toHaveBeenCalledWith(
-//         expect.objectContaining({
-//           walletId: mockWalletId,
-//           entryType: EntryType.DEBIT,
-//           movementType: MovementType.TRANSFER, // MUST be Transfer, not Withdrawal
-//           sourceType: LedgerSourceType.CONTRIBUTION,
-//           amount: contributionAmount,
-//         }),
-//         expect.anything(),
-//       );
+      await expect(service.requestToJoin(userId, circleId)).rejects.toThrow(BadRequestException);
+    });
+  });
 
-//       // Check second call: Pool Credit
-//       expect(mockLedgerService.writeEntry).toHaveBeenCalledWith(
-//         expect.objectContaining({
-//           walletId: mockPoolWalletId,
-//           entryType: EntryType.CREDIT,
-//           movementType: MovementType.TRANSFER,
-//           sourceType: LedgerSourceType.CONTRIBUTION,
-//           amount: contributionAmount,
-//         }),
-//         expect.anything(),
-//       );
-//     });
-//   });
+  // ── rejectMember ───────────────────────────────────────────────────────────
 
-//   describe('Collateral Invariants (Rule R7)', () => {
-//     it('should NOT release collateral when a contribution is made', async () => {
-//       // Setup identical to above
-//       mockPrismaService.roscaCircle.findUnique.mockResolvedValue({
-//         id: mockCircleId,
-//         status: CircleStatus.ACTIVE,
-//         contributionAmount: 1000n,
-//         latePenaltyPercent: 0,
-//         schedules: [{ contributionDeadline: new Date(Date.now() + 86400000) }],
-//       });
-//       mockPrismaService.roscaMembership.findUnique.mockResolvedValue({
-//         id: 'mem-1',
-//         status: MembershipStatus.ACTIVE,
-//       });
+  describe('rejectMember', () => {
+    it('should release collateral and set status to REJECTED', async () => {
+      const circleId = 'circle-1';
+      const adminId = 'admin-1';
+      const userId = 'user-1';
 
-//       await service.makeContribution(mockUserId, mockCircleId, 1);
+      mockPrisma.roscaCircle.findUnique.mockResolvedValue({ id: circleId, adminId });
+      mockPrisma.roscaMembership.findUnique.mockResolvedValue({
+        id: 'mem-1', status: MembershipStatus.PENDING, collateralAmount: 50000n,
+      });
+      mockPrisma.wallet.findUnique.mockResolvedValue({ id: 'wallet-1' });
+      mockPrisma.roscaMembership.update.mockResolvedValue({ id: 'mem-1', status: MembershipStatus.REJECTED });
 
-//       // Verify no ledger entry was created for COLLATERAL_RELEASE
-//       const writeCalls = mockLedgerService.writeEntry.mock.calls;
-//       const releaseCall = writeCalls.find(
-//         (call) => call[0].sourceType === LedgerSourceType.COLLATERAL_RELEASE,
-//       );
+      await service.rejectMember(circleId, adminId, userId);
 
-//       expect(releaseCall).toBeUndefined();
-//     });
-//   });
-// });
+      expect(mockLedgerService.writeEntry).toHaveBeenCalledWith(
+        expect.objectContaining({
+          entryType: EntryType.RELEASE,
+          bucketType: BucketType.ROSCA,
+          amount: 50000n,
+          sourceType: LedgerSourceType.COLLATERAL_RESERVE,
+        }),
+        expect.anything(),
+      );
+    });
+
+    it('should throw BadRequestException if membership is not PENDING', async () => {
+      mockPrisma.roscaCircle.findUnique.mockResolvedValue({ id: 'circle-1', adminId: 'admin-1' });
+      mockPrisma.roscaMembership.findUnique.mockResolvedValue({
+        id: 'mem-1', status: MembershipStatus.ACTIVE, collateralAmount: 50000n,
+      });
+
+      await expect(service.rejectMember('circle-1', 'admin-1', 'user-1')).rejects.toThrow(BadRequestException);
+    });
+  });
+
+  // ── calculateCollateral (fixed at 10%) ────────────────────────────────────
+
+  describe('collateral calculation', () => {
+    it('should always calculate exactly 10% regardless of circle config', async () => {
+      const circleId = 'circle-1';
+      mockPrisma.wallet.findUnique.mockResolvedValue({ id: 'wallet-1' });
+      mockPrisma.roscaCircle.findUnique.mockResolvedValue({
+        id: circleId,
+        status: CircleStatus.DRAFT,
+        contributionAmount: 1000000n, // ₦10,000
+        collateralPercentage: 99, // even if DB has a different value, code ignores it
+        filledSlots: 0,
+        maxSlots: 10,
+      });
+      mockPrisma.roscaMembership.findUnique.mockResolvedValue(null);
+      mockPrisma.roscaMembership.create.mockResolvedValue({
+        id: 'mem-1', collateralAmount: 100000n, status: MembershipStatus.PENDING,
+      });
+
+      await service.requestToJoin('user-1', circleId);
+
+      // Must always be 10% = 100000n, never 99%
+      expect(mockLedgerService.writeEntry).toHaveBeenCalledWith(
+        expect.objectContaining({ amount: 100000n }),
+        expect.anything(),
+      );
+    });
+  });
+
+  // ── activateCircle ─────────────────────────────────────────────────────────
+
+  describe('activateCircle', () => {
+    it('should throw BadRequestException if circle is already active', async () => {
+      mockPrisma.roscaCircle.findUnique.mockResolvedValue({
+        id: 'circle-1',
+        status: CircleStatus.ACTIVE,
+        _count: { memberships: 5 },
+      });
+
+      const futureDate = new Date(Date.now() + 86400000);
+      await expect(service.activateCircle('circle-1', futureDate)).rejects.toThrow(BadRequestException);
+    });
+  });
+});
