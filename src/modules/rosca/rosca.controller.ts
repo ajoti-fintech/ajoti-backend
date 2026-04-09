@@ -41,6 +41,9 @@ import {
   DisbursementScheduleResponseDto,
   FinancialHealthResponseDto,
   RoundQueryDto,
+  CreateInviteDto,
+  JoinByInviteDto,
+  InviteResponseDto,
 } from './dto/rosca.dto';
 import { Roles } from '@/common/decorators/roles.decorator';
 
@@ -161,6 +164,19 @@ export class RoscaController {
     return {
       success: true,
       message: result.message,
+    };
+  }
+
+  @Post('join-by-invite')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Join a private ROSCA circle using an invite token' })
+  @ApiResponse({ status: 200, type: RoscaMembershipResponseDto })
+  async joinByInvite(@CurrentUser('userId') userId: string, @Body() dto: JoinByInviteDto) {
+    const membership = await this.roscaService.joinByInvite(userId, dto.token);
+    return {
+      success: true,
+      message: 'Joined circle successfully. Awaiting admin approval.',
+      data: formatMembershipResponse(membership),
     };
   }
 }
@@ -307,6 +323,43 @@ export class RoscaAdminController {
   ) {
     const data = await this.roscaService.notifyMissingMembers(circleId, adminId, query.round);
     return { success: true, message: `Notified ${data.notified} missing member(s) for cycle ${data.cycleNumber}`, data };
+  }
+
+  @Post(':circleId/invites')
+  @HttpCode(HttpStatus.CREATED)
+  @ApiOperation({ summary: '[Admin] Send an invite to a person to join a private circle' })
+  @ApiResponse({ status: 201, type: InviteResponseDto })
+  async createInvite(
+    @Param('circleId') circleId: string,
+    @CurrentUser('userId') adminId: string,
+    @Body() dto: CreateInviteDto,
+  ) {
+    const invite = await this.roscaService.createInvite(circleId, adminId, dto.email);
+    return { success: true, message: 'Invite created successfully', data: invite };
+  }
+
+  @Get(':circleId/invites')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: '[Admin] List all invites for a private circle' })
+  @ApiResponse({ status: 200, type: [InviteResponseDto] })
+  async listInvites(
+    @Param('circleId') circleId: string,
+    @CurrentUser('userId') adminId: string,
+  ) {
+    const data = await this.roscaService.listInvites(circleId, adminId);
+    return { success: true, message: 'Invites retrieved successfully', data };
+  }
+
+  @Delete(':circleId/invites/:inviteId')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: '[Admin] Revoke an unused invite' })
+  async revokeInvite(
+    @Param('circleId') circleId: string,
+    @Param('inviteId') inviteId: string,
+    @CurrentUser('userId') adminId: string,
+  ) {
+    const result = await this.roscaService.revokeInvite(circleId, inviteId, adminId);
+    return { success: true, message: result.message };
   }
 
   @Get(':circleId')
