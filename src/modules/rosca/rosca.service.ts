@@ -6,7 +6,6 @@ import {
   ForbiddenException,
   ConflictException,
 } from '@nestjs/common';
-import { PrismaService } from '../../prisma/prisma.service';
 import { LedgerService } from '../ledger/ledger.service';
 import {
   Prisma,
@@ -28,6 +27,7 @@ import {
 } from './dto/rosca.dto';
 import { PayoutSorter } from './payout-sorter.util';
 import { NotificationService } from '../notification/notification.service';
+import { PrismaService } from '@/prisma';
 
 @Injectable()
 export class RoscaService {
