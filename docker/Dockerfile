@@ -30,7 +30,9 @@ ENV NODE_ENV=production
 
 # No network calls here — everything copied from previous stages
 COPY --from=deps /app/node_modules ./node_modules
+# .prisma = query engine, @prisma/engines = schema-engine needed for migrate deploy
 COPY --from=builder /app/node_modules/.prisma ./node_modules/.prisma
+COPY --from=builder /app/node_modules/@prisma/engines ./node_modules/@prisma/engines
 COPY --from=builder /app/package.json ./
 COPY --from=builder /app/dist ./dist
 COPY --from=builder /app/prisma ./prisma
