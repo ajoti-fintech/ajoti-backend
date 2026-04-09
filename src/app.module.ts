@@ -1,5 +1,5 @@
 import { Module, MiddlewareConsumer, NestModule } from '@nestjs/common';
-import { ConfigModule, ConfigService } from '@nestjs/config';
+import { ConfigModule, ConfigService, ConfigType } from '@nestjs/config';
 import { APP_GUARD } from '@nestjs/core';
 import { ThrottlerModule } from '@nestjs/throttler';
 import { ScheduleModule } from '@nestjs/schedule';
@@ -27,6 +27,11 @@ import { LoanModule } from './modules/loans/loans.module';
 import redisConfig from './config/redis.config';
 import { BullModule } from '@nestjs/bullmq';
 import { ThrottlerStorageRedisService } from 'nestjs-throttler-storage-redis';
+import { appConfig } from './config';
+import { flutterwaveConfig } from './config/flutterwave.config';
+import { PrismaModule } from './prisma';
+import { HealthModule } from './modules/health';
+import { LoggerMiddleware } from './common';
 
 const ENV = process.env.NODE_ENV || 'development';
 
@@ -44,17 +49,10 @@ const ENV = process.env.NODE_ENV || 'development';
 
     BullModule.forRootAsync({
       imports: [ConfigModule],
-      inject: [ConfigService],
-      useFactory: (config: ConfigService) => {
-        const redisUrl = config.get('REDIS_URL');
+      inject: [redisConfig.KEY],
+      useFactory: (redis: ConfigType<typeof redisConfig>) => {
         return {
-          connection: redisUrl
-            ? { url: redisUrl } // Use full string on Render
-            : {
-                host: config.get('REDIS_HOST', 'localhost'),
-                port: config.get<number>('REDIS_PORT', 6379),
-                password: config.get('REDIS_PASSWORD'),
-              },
+          connection: redis.connection,
           maxRetriesPerRequest: null, // This fixes the 'MaxRetriesPerRequestError'
         };
       },
@@ -62,9 +60,8 @@ const ENV = process.env.NODE_ENV || 'development';
 
     ThrottlerModule.forRootAsync({
       imports: [ConfigModule],
-      inject: [ConfigService],
-      useFactory: (config: ConfigService) => {
-        const redisUrl = config.get('REDIS_URL');
+      inject: [ConfigService, redisConfig.KEY],
+      useFactory: (config: ConfigService, redis: ConfigType<typeof redisConfig>) => {
         return {
           throttlers: [
             {
@@ -72,13 +69,10 @@ const ENV = process.env.NODE_ENV || 'development';
               limit: config.get('THROTTLE_LIMIT', 100),
             },
           ],
-          // Fix: Use the URL string directly for the Throttler storage
-          storage: redisUrl
-            ? new ThrottlerStorageRedisService(redisUrl)
-            : new ThrottlerStorageRedisService({
-                host: config.get('REDIS_HOST', 'localhost'),
-                port: config.get('REDIS_PORT', 6379),
-              }),
+          storage:
+            typeof redis.storage === 'string'
+              ? new ThrottlerStorageRedisService(redis.storage)
+              : new ThrottlerStorageRedisService(redis.storage),
         };
       },
     }),

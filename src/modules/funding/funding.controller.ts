@@ -17,7 +17,12 @@ export class FundingController {
 
   @Post('initialize')
   @HttpCode(HttpStatus.CREATED)
-  @ApiOperation({ summary: 'Initialize a funding transaction and get payment link' })
+  @ApiOperation({
+    summary: 'Initialize a funding transaction and get payment link',
+    description:
+      'Starts a hosted Flutterwave checkout session. Save the returned reference and keep it until the payment is settled. ' +
+      'Your frontend will need this same reference for GET /api/wallet/funding/verify/:reference after Flutterwave redirects the user back.',
+  })
   @ApiBody({ type: InitializeFundingDto })
   @ApiResponse({ status: 201, description: 'Funding session created', type: FundingResponseDto })
   @ApiResponse({ status: 400, description: 'Invalid input or wallet inactive' })
@@ -40,7 +45,16 @@ export class FundingController {
     summary: 'Verify a funding payment after redirect',
     description:
       'Call this immediately when the user lands back from Flutterwave. ' +
-      'Triggers on-demand verification and credits the wallet if payment was successful.',
+      'Use the same reference returned by initialize. This is also the same value Flutterwave sends back as tx_ref on redirect, ' +
+      'so the frontend can recover it from the redirect URL if local state is lost. ' +
+      'This endpoint triggers on-demand verification and credits the wallet if payment was successful.',
+  })
+  @ApiParam({
+    name: 'reference',
+    required: true,
+    example: 'AJT-FUND-8ca2de2e-67c8-4d51-b74d-c1b6f5939b55',
+    description:
+      'Internal funding reference returned by initialize. It matches Flutterwave tx_ref on redirect and must be kept until settlement completes.',
   })
   @ApiResponse({ status: 200, description: 'Payment status: success | pending | failed' })
   async verifyFunding(
@@ -84,7 +98,8 @@ export class FundingAdminController {
     name: 'reference',
     required: true,
     example: 'AJT-FUND-8ca2de2e-67c8-4d51-b74d-c1b6f5939b55',
-    description: 'Internal funding tx_ref created at initialize step',
+    description:
+      'Internal funding reference created at initialize step. This matches the Flutterwave tx_ref used for hosted checkout funding.',
   })
   @ApiResponse({ status: 200, description: 'Manual reconciliation executed' })
   @ApiResponse({ status: 400, description: 'Invalid reference' })

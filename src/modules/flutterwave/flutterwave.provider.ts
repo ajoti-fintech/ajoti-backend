@@ -472,46 +472,6 @@ export class FlutterwaveProvider {
 
   // ─── Virtual Accounts ─────────────────────────────────────────────────────
 
-    /**
-     * Create a virtual account number.
-     *
-     * Static (permanent) VA:
-     *   - set is_permanent=true
-     *   - include tx_ref + customer details (+ BVN/NIN where required)
-     *
-     * Dynamic (temporary) VA:
-     *   - omit is_permanent or set false
-     *   - include amount (> 0) and optional frequency
-     *
-     * Flutterwave v3 endpoint:
-     *   POST /v3/virtual-account-numbers
-     */
-    async createVirtualAccount(
-        payload: FlwCreateVirtualAccountPayload,
-    ): Promise<FlwVirtualAccountResponse> {
-        if (this.isMockMode) {
-            this.logger.debug(`[MOCK] createVirtualAccount: tx_ref=${payload.tx_ref}`);
-            return {
-                status: 'success',
-                message: 'Mock virtual account created',
-                data: {
-                    response_code: '02',
-                    response_message: 'Transaction in progress',
-                    flw_ref: `FLW-MOCK-VA-${Date.now()}`,
-                    order_ref: `URF_MOCK_${Date.now()}`,
-                    account_number: `990000${Math.floor(Math.random() * 10000)
-                        .toString()
-                        .padStart(4, '0')}`,
-                    bank_name: `Mock Bank`,
-                    account_name: `${payload.firstname} ${payload.lastname}`,
-                    created_at: new Date().toISOString(),
-                    expiry_date: 'N/A',
-                    amount: '0.00',
-                    frequency: 'N/A',
-                    is_active: true,
-                },
-            };
-        }
   /**
    * Create a virtual account number.
    *

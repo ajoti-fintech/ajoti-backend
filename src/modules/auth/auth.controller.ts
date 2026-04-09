@@ -10,7 +10,6 @@ import {
 } from '@nestjs/common';
 import { AuthService } from './auth.service';
 import {
-  ChangePasswordDto,
   ForgotPasswordDto,
   LogoutDto,
   OAuthPasswordFormDto,
@@ -170,21 +169,5 @@ export class AuthController {
   @ApiOkResponse({ description: 'Password reset successful' })
   async reset_password(@Body() dto: ResetPasswordDto) {
     return this.auth.resetPassword(dto);
-  }
-
-  @ApiBearerAuth('access-token')
-  @ApiUnauthorizedResponse({ description: 'Unauthorized' })
-  @UseGuards(JwtAuthGuard)
-  @Post('change-password')
-  @HttpCode(HttpStatus.OK)
-  @Throttle({ default: { ttl: 60000, limit: 5 } })
-  @ApiBody({ type: ChangePasswordDto })
-  @ApiOperation({
-    summary: 'Change password',
-    description: 'Change password with current password',
-  })
-  @ApiOkResponse({ description: 'Password change successful' })
-  async change_password(@Request() req: AuthRequest, @Body() dto: ChangePasswordDto) {
-    return this.auth.changePassword(req.user.userId, dto);
   }
 }

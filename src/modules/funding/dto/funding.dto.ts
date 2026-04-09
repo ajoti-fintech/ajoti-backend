@@ -62,7 +62,12 @@ export class FundingResponseDto {
   @ApiProperty({
     type: 'object',
     properties: {
-      reference: { type: 'string', example: 'AJT-FUND-uuid-here' },
+      reference: {
+        type: 'string',
+        example: 'AJT-FUND-uuid-here',
+        description:
+          'Save this internal funding reference. The frontend must use it for GET /api/wallet/funding/verify/:reference after Flutterwave redirects back.',
+      },
       authorizationUrl: { type: 'string', example: 'https://checkout.flutterwave.com/...' },
       provider: { type: 'string', example: 'FLUTTERWAVE' },
     },

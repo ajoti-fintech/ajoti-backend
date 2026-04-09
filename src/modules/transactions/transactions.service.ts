@@ -69,7 +69,7 @@ export class TransactionsService {
    */
   async updateStatus(id: string, status: TransactionStatus, extra?: UpdateStatusExtra) {
     const completedAt =
-      extra?.completedAt || (status === TransactionStatus.SUCCESS ? new Date() : null);
+      extra?.completedAt || (status !== TransactionStatus.PENDING ? new Date() : null);
 
     return this.prisma.transaction.update({
       where: { id },
@@ -169,6 +169,7 @@ export class TransactionsService {
       where: { reference },
       data: {
         status: TransactionStatus.FAILED,
+        completedAt: new Date(),
         metadata: {
           ...((transaction.metadata as Record<string, any>) || {}),
           error: reason,
@@ -263,6 +264,7 @@ export class TransactionsService {
       where: { id: transactionId },
       data: {
         status: TransactionStatus.FAILED,
+        completedAt: new Date(),
         metadata: {
           error: reason,
           failedAt: new Date().toISOString(),

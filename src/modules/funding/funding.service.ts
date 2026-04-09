@@ -51,6 +51,7 @@ export class FundingService {
     }
 
     const reference = `AJT-FUND-${crypto.randomUUID()}`;
+    const initializedAt = new Date().toISOString();
 
     // Record the intent — PENDING until webhook confirms
     const transaction = await this.transactionsService.create({
@@ -61,7 +62,12 @@ export class FundingService {
       status: TransactionStatus.PENDING,
       currency: dto.currency ?? 'NGN',
       provider: 'FLUTTERWAVE',
-      metadata: dto.metadata ? (dto.metadata as Prisma.InputJsonValue) : undefined,
+      metadata: {
+        ...(dto.metadata ?? {}),
+        source: 'HOSTED_CHECKOUT',
+        initializedAt,
+        redirectUrl: dto.redirectUrl,
+      } as Prisma.InputJsonValue,
     });
 
     const user = await this.prisma.user.findUnique({ where: { id: userId } });
@@ -109,6 +115,14 @@ export class FundingService {
       );
       throw new BadRequestException(
         providerResponse.message ?? 'Payment provider unavailable. Please try again.',
+      );
+    }
+
+    try {
+      await this.fundingReconciliationScheduler.scheduleInitialVerification(reference);
+    } catch (error) {
+      this.logger.warn(
+        `Funding background verification could not be queued for ref=${reference}: ${error instanceof Error ? error.message : String(error)}`,
       );
     }
 
@@ -180,6 +194,7 @@ export class FundingService {
     const result = await this.fundingReconciliationScheduler.reconcileByReference(
       reference,
       userId,
+      'USER_VERIFY',
     );
 
     if (result.outcome === 'settled' || result.outcome === 'already_processed') {

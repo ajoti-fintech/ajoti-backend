@@ -1,3 +1,9 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+// Looking for ways to speed up your queries, or scale easily with your serverless or edge functions?
+// Try Prisma Accelerate: https://pris.ly/cli/accelerate-init
+
 generator client {
   provider = "prisma-client-js"
   output   = "../node_modules/.prisma/client"
@@ -11,55 +17,57 @@ datasource db {
 // WALLET SYSTEM MODELS
 // ============================================================================
 
-// 1. Wallets — one custodial NGN wallet per user
+// 1. Wallets
+// One wallet per user - custodial NGN wallet
 model Wallet {
   id        String       @id @default(uuid())
   userId    String       @unique @map("user_id")
+  user      User         @relation(fields: [userId], references: [id])
   currency  String       @default("NGN")
   status    WalletStatus @default(ACTIVE)
   createdAt DateTime     @default(now()) @map("created_at")
   updatedAt DateTime     @updatedAt @map("updated_at")
 
   // Relations
-  user           User            @relation(fields: [userId], references: [id])
   ledgerEntries  LedgerEntry[]
   buckets        WalletBucket[]
   transactions   Transaction[]
   systemWallet   SystemWallet?
-  virtualAccount VirtualAccount?
+  virtualAccount VirtualAccount? // ← ADDED
 
   @@map("wallets")
 }
 
 enum WalletStatus {
-  ACTIVE      // Normal operations allowed
-  RESTRICTED  // Limited operations (e.g., can't withdraw)
-  SUSPENDED   // No operations allowed
-  CLOSED      // Wallet closed permanently
+  ACTIVE     // Normal operations allowed
+  RESTRICTED // Limited operations (e.g., can't withdraw)
+  SUSPENDED  // No operations allowed
+  CLOSED     // Wallet closed permanently
 }
 
-// 2. Ledger — append-only transaction log, source of truth
-// CRITICAL: No updates, no deletes — append-only
+// 2. Ledger (Append-only transaction log)
+// SOURCE OF TRUTH - Balance is derived from this table
+// CRITICAL: No updates, no deletes - append-only
 model LedgerEntry {
-  id            String           @id @default(uuid())
-  walletId      String           @map("wallet_id")
-  reference     String
-  entryType     EntryType        @map("entry_type")
-  movementType  MovementType     @map("movement_type")
-  bucketType    BucketType?      @map("bucket_type")
-  amount        BigInt           // Stored in kobo (smallest unit)
-  balanceBefore BigInt           @map("balance_before")
-  balanceAfter  BigInt           @map("balance_after")
-  metadata      Json?            // Additional context (provider, event IDs, etc.)
-  sourceType    LedgerSourceType @map("source_type")
-  sourceId      String           @map("source_id")
-  createdAt     DateTime         @default(now()) @map("created_at")
+  id           String           @id @default(uuid())
+  walletId     String           @map("wallet_id")
+  reference    String
+  entryType    EntryType        @map("entry_type")
+  movementType MovementType     @map("movement_type")
+  bucketType   BucketType?      @map("bucket_type")
+  amount       BigInt           // Store in kobo (smallest unit)
+  balanceBefore BigInt          @map("balance_before")
+  balanceAfter  BigInt          @map("balance_after")
+  metadata     Json?            // Additional context (provider, event IDs, etc.)
+  createdAt    DateTime         @default(now()) @map("created_at")
+  sourceType   LedgerSourceType @map("source_type")
+  sourceId     String           @map("source_id")
 
   // Relations
   wallet Wallet @relation(fields: [walletId], references: [id])
 
   @@unique([walletId, reference, sourceType, sourceId])
-  @@index([walletId, createdAt(sort: Desc)]) // Optimised for "Get Latest Balance"
+  @@index([walletId, createdAt(sort: Desc)]) // Optimized for "Get Latest Balance"
   @@index([walletId, sourceType, sourceId])
   @@map("ledger_entries")
 }
@@ -87,7 +95,7 @@ enum LedgerSourceType {
 }
 
 enum BucketType {
-  MAIN       // Unreserved / spendable balance
+  MAIN       // The unreserved/spendable balance
   ROSCA      // Main Wallet <-> ROSCA Bucket
   TARGET     // Main Wallet <-> TARGET Bucket
   FIXED      // Main Wallet <-> FIXED Bucket
@@ -100,8 +108,8 @@ enum MovementType {
   TRANSFER   // Moving between wallets or buckets
 }
 
-// 3. Wallet Buckets — logical fund locks
-// IMPORTANT: Buckets don't hold money — they restrict spendable balance
+// 3. Wallet Buckets (Logical fund locks)
+// IMPORTANT: Buckets don't hold money - they restrict spendable balance
 model WalletBucket {
   id             String     @id @default(uuid())
   walletId       String     @map("wallet_id")
@@ -118,7 +126,7 @@ model WalletBucket {
   @@map("wallet_buckets")
 }
 
-// 4. External Transactions — Flutterwave tracking
+// 4. External Transactions (Flutterwave tracking)
 model Transaction {
   id          String            @id @default(uuid())
   walletId    String            @map("wallet_id")
@@ -144,11 +152,11 @@ model Transaction {
 }
 
 enum TransactionType {
-  FUNDING              // Money coming in (method not yet finalised)
-  FUNDING_CARD         // Funding via card
-  FUNDING_USSD         // Funding via USSD
-  FUNDING_BANKTRANSFER // Funding via bank transfer
-  FUNDING_ACCOUNT      // Funding via direct account debit
+  FUNDING              // Money coming in (initiated, method not yet finalized)
+  FUNDING_CARD         // Funding completed via card
+  FUNDING_USSD         // Funding completed via USSD
+  FUNDING_BANKTRANSFER // Funding completed via bank transfer
+  FUNDING_ACCOUNT      // Funding completed via direct account debit
   WITHDRAWAL           // Money going out (Wallet → Bank)
 }
 
@@ -158,7 +166,8 @@ enum TransactionStatus {
   FAILED  // Failed or reversed
 }
 
-// 5. Webhook Idempotency — prevents duplicate webhook processing
+// 5. Webhook Idempotency
+// Prevents duplicate webhook processing
 // CRITICAL: Check this before processing any webhook
 model WebhookEvent {
   id          String   @id @default(uuid())
@@ -172,15 +181,21 @@ model WebhookEvent {
   @@map("webhook_events")
 }
 
-// 6. Virtual Accounts — one permanent Wema Bank account per user
-// Idempotency for VA credits uses flw_ref (unique per payment),
-// NOT tx_ref (static, reused for every payment to the same VA).
+// 6. Virtual Accounts
+// One permanent Wema Bank account number per user.
+// Anyone sending NGN to this account triggers a charge.completed webhook
+// with payment_type='bank_transfer' and tx_ref = our stable AJOTI-VA-{userId}.
+//
+// Idempotency for VA credits uses flw_ref (unique per incoming payment),
+// NOT tx_ref (which is static and reused for every payment to the same VA).
 model VirtualAccount {
   id String @id @default(uuid())
 
+  // One per user
   userId String @unique @map("user_id")
   user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
 
+  // Linked to the user's wallet for ledger writes
   walletId String @unique @map("wallet_id")
   wallet   Wallet @relation(fields: [walletId], references: [id])
 
@@ -191,8 +206,8 @@ model VirtualAccount {
   flwRef        String @unique @map("flw_ref")   // FLW's internal reference
   orderRef      String @unique @map("order_ref") // Used to query VA status via FLW API
 
-  // Stable reference — format: AJOTI-VA-{userId}
-  // Appears in every charge.completed webhook for this VA
+  // Our stable reference — format: AJOTI-VA-{userId}
+  // This is the tx_ref that appears in every charge.completed for this VA
   txRef String @unique @map("tx_ref")
 
   currency    String  @default("NGN")
@@ -209,30 +224,29 @@ model VirtualAccount {
 // FINANCIAL CUSTODY & ROSCA
 // ============================================================================
 
-// 1. System Wallets — singleton rows
+// 1. SYSTEM WALLETS — SINGLETON ROWS
 model SystemWallet {
   id        String           @id @default(uuid())
   type      SystemWalletType @unique // Only one PLATFORM_POOL, one RECIPIENT_BASE
   walletId  String           @unique @map("wallet_id")
+  wallet    Wallet           @relation(fields: [walletId], references: [id])
   createdAt DateTime         @default(now()) @map("created_at")
-
-  // Relations
-  wallet Wallet @relation(fields: [walletId], references: [id])
 
   @@map("system_wallets")
 }
 
 enum SystemWalletType {
-  PLATFORM_POOL  // Holds all undisbursed ROSCA funds
+  PLATFORM_POOL  // Holds all undispersed ROSCA funds
   RECIPIENT_BASE // Template wallet for payouts (cloned per recipient)
 }
 
-// 2. ROSCA Circles
+// 2. ROSCA CIRCLES
 model RoscaCircle {
   id          String  @id @default(uuid())
   name        String
   description String?
   adminId     String  @map("admin_id")
+  admin       User    @relation(fields: [adminId], references: [id])
 
   // Financial
   contributionAmount BigInt         @map("contribution_amount") // Kobo
@@ -255,7 +269,7 @@ model RoscaCircle {
   latePenaltyPercent   Float   @default(2.0) @map("late_penalty_percent")
   preStartExitPenalty  BigInt? @map("pre_start_exit_penalty")
 
-  // Trust — derived only, NO manual override
+  // Trust (derived only — NO manual override)
   minTrustScoreRequired Int @default(0) @map("min_trust_score_required")
 
   // Dates
@@ -270,7 +284,6 @@ model RoscaCircle {
   updatedAt DateTime @updatedAt @map("updated_at")
 
   // Relations
-  admin         User                 @relation(fields: [adminId], references: [id])
   memberships   RoscaMembership[]
   schedules     RoscaCycleSchedule[]
   contributions RoscaContribution[]
@@ -306,14 +319,16 @@ enum CircleStatus {
   CANCELLED
 }
 
-// 3. ROSCA Memberships
+// 3. ROSCA MEMBERSHIPS
 model RoscaMembership {
   id       String      @id @default(uuid())
   circleId String      @map("circle_id")
+  circle   RoscaCircle @relation(fields: [circleId], references: [id])
   userId   String      @map("user_id")
-  status   MembershipStatus @default(PENDING)
+  user     User        @relation(fields: [userId], references: [id])
 
-  payoutPosition Int? @map("payout_position")
+  status         MembershipStatus @default(PENDING)
+  payoutPosition Int?             @map("payout_position")
 
   // Collateral — locked until circle COMPLETED
   collateralAmount   BigInt  @map("collateral_amount") // Kobo
@@ -332,8 +347,6 @@ model RoscaMembership {
   updatedAt   DateTime  @updatedAt @map("updated_at")
 
   // Relations
-  circle        RoscaCircle       @relation(fields: [circleId], references: [id])
-  user          User              @relation(fields: [userId], references: [id])
   contributions RoscaContribution[]
 
   @@unique([circleId, userId])
@@ -348,10 +361,11 @@ enum MembershipStatus {
   EXITED
 }
 
-// 4. ROSCA Cycle Schedules — generated at circle activation
+// 4. ROSCA CYCLE SCHEDULES — GENERATED AT ACTIVATION
 model RoscaCycleSchedule {
   id       String      @id @default(uuid())
   circleId String      @map("circle_id")
+  circle   RoscaCircle @relation(fields: [circleId], references: [id])
 
   cycleNumber          Int            @map("cycle_number")
   contributionDeadline DateTime       @map("contribution_deadline")
@@ -360,17 +374,16 @@ model RoscaCycleSchedule {
 
   // Pot is DERIVED from ledger, NOT stored
   recipientId String? @map("recipient_id")
+  recipient   User?   @relation(fields: [recipientId], references: [id])
 
-  // Soft delete — if admin regenerates schedules
+  // Soft delete support — if admin regenerates schedules
   obsoletedAt DateTime? @map("obsoleted_at")
 
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
 
   // Relations
-  circle    RoscaCircle  @relation(fields: [circleId], references: [id])
-  recipient User?        @relation(fields: [recipientId], references: [id])
-  payout    RoscaPayout?
+  payout RoscaPayout?
 
   @@unique([circleId, cycleNumber, obsoletedAt])
   @@map("rosca_cycle_schedules")
@@ -383,12 +396,15 @@ enum ScheduleStatus {
   CANCELLED
 }
 
-// 5. ROSCA Contributions
+// 5. ROSCA CONTRIBUTIONS
 model RoscaContribution {
   id           String          @id @default(uuid())
   circleId     String          @map("circle_id")
+  circle       RoscaCircle     @relation(fields: [circleId], references: [id])
   membershipId String          @map("membership_id")
+  membership   RoscaMembership @relation(fields: [membershipId], references: [id])
   userId       String          @map("user_id")
+  user         User            @relation(fields: [userId], references: [id])
 
   cycleNumber   Int    @map("cycle_number")
   amount        BigInt // Kobo
@@ -401,21 +417,20 @@ model RoscaContribution {
   paidAt    DateTime @default(now()) @map("paid_at")
   createdAt DateTime @default(now()) @map("created_at")
 
-  // Relations
-  circle     RoscaCircle     @relation(fields: [circleId], references: [id])
-  membership RoscaMembership @relation(fields: [membershipId], references: [id])
-  user       User            @relation(fields: [userId], references: [id])
-
   @@unique([circleId, membershipId, cycleNumber])
   @@map("rosca_contributions")
 }
 
-// 6. ROSCA Payouts
+// 6. ROSCA PAYOUTS
 model RoscaPayout {
   id         String             @id @default(uuid())
   circleId   String             @map("circle_id")
+  circle     RoscaCircle        @relation(fields: [circleId], references: [id])
   scheduleId String             @unique @map("schedule_id")
-  recipientId String            @map("recipient_id")
+  schedule   RoscaCycleSchedule @relation(fields: [scheduleId], references: [id])
+
+  recipientId String @map("recipient_id")
+  recipient   User   @relation(fields: [recipientId], references: [id])
 
   amount BigInt       // Kobo — derived from ledger, stored for performance
   status PayoutStatus @default(PENDING)
@@ -436,11 +451,6 @@ model RoscaPayout {
   createdAt   DateTime  @default(now()) @map("created_at")
   updatedAt   DateTime  @updatedAt @map("updated_at")
 
-  // Relations
-  circle    RoscaCircle        @relation(fields: [circleId], references: [id])
-  schedule  RoscaCycleSchedule @relation(fields: [scheduleId], references: [id])
-  recipient User               @relation(fields: [recipientId], references: [id])
-
   @@map("rosca_payouts")
 }
 
@@ -451,10 +461,11 @@ enum PayoutStatus {
   FAILED
 }
 
-// 7. Trust Stats — system-derived only, NO manual overrides
+// 7. TRUST STATS — SYSTEM DERIVED ONLY
 model UserTrustStats {
   id     String @id @default(uuid())
   userId String @unique @map("user_id")
+  user   User   @relation(fields: [userId], references: [id])
 
   trustScore              Int   @default(50) // 0-100, ATI-computed
   completionRate          Float @default(0)  // % of completed cycles
@@ -481,29 +492,17 @@ model UserTrustStats {
   averagePeerRating Float @default(0) @map("average_peer_rating")
   totalPeerRatings  Int   @default(0) @map("total_peer_ratings")
 
-  // ATI: Recent Behavior component (last cycle only — reset each cycle)
-  onTimePaymentsLastCycle   Int @default(0) @map("on_time_payments_last_cycle")
-  expectedPaymentsLastCycle Int @default(0) @map("expected_payments_last_cycle")
-
-  // ATI: Payout Reliability component (post-payout payments)
-  postPayoutOnTimePayments   Int @default(0) @map("post_payout_on_time_payments")
-  expectedPostPayoutPayments Int @default(0) @map("expected_post_payout_payments")
-
-  // ATI: Peer Trust component
-  averagePeerRating Float @default(0) @map("average_peer_rating")
-  totalPeerRatings  Int   @default(0) @map("total_peer_ratings")
+  // NO manual override fields
+  // NO admin adjustment columns
 
   lastUpdated DateTime @default(now()) @map("last_updated")
   createdAt   DateTime @default(now()) @map("created_at")
   updatedAt   DateTime @updatedAt @map("updated_at")
 
-  // Relations
-  user User @relation(fields: [userId], references: [id])
-
   @@map("user_trust_stats")
 }
 
-// 8. Audit Log — immutable record of admin actions
+// 8. AUDIT LOG — IMMUTABLE RECORD OF ADMIN ACTIONS
 model AuditLog {
   id        String @id @default(uuid())
   actorId   String @map("actor_id")   // User ID of admin/system
@@ -513,10 +512,10 @@ model AuditLog {
   entityType String @map("entity_type") // ROSCA_CIRCLE, WALLET, etc.
   entityId   String @map("entity_id")
 
-  before   Json?   // State before change
-  after    Json?   // State after change
-  reason   String? // Required for sensitive actions
-  metadata Json?   // IP, userAgent, etc.
+  before Json?   // State before change
+  after  Json?   // State after change
+  reason String? // Required for sensitive actions
+  metadata Json? // IP, userAgent, etc.
 
   createdAt DateTime @default(now()) @map("created_at")
 
@@ -594,6 +593,7 @@ enum OTPPurpose {
   VERIFICATION
   RESET_PASSWORD
   KYC_VERIFICATION
+  EMAIL_CHANGE
 
   // Add more purposes as needed
   // WITHDRAWAL_APPROVAL
@@ -638,26 +638,24 @@ enum Gender {
 }
 
 model User {
-  id         String   @id @default(uuid())
-  email      String   @unique
+  id         String  @id @default(uuid())
+  email      String  @unique
+  pendingEmail String? @unique
   firstName  String
   lastName   String
   password   String
   dob        DateTime @default(now())
   gender     Gender
   phone      String
-  role       Role     @default(MEMBER)
-  isVerified Boolean  @default(false)
-  createdAt  DateTime @default(now())
-  updatedAt  DateTime @updatedAt
+  role       Role    @default(MEMBER)
+  isVerified Boolean @default(false)
 
   // Relations
-  wallet              Wallet?
-  profile             UserProfile?
-  kyc                 KYC?
-  virtualAccount      VirtualAccount?
-  creditScore         CreditScore?
-  userTrustStats      UserTrustStats?
+  wallet         Wallet?
+  profile        UserProfile?
+  kyc            KYC?
+  virtualAccount VirtualAccount? // ← ADDED
+
   refreshTokens       RefreshToken[]
   otps                OtpCode[]
   savedBankAccounts   SavedBankAccount[]
@@ -677,25 +675,28 @@ model User {
 }
 
 model UserProfile {
-  id        String   @id @default(uuid())
-  userId    String   @unique
+  id     String @id @default(uuid())
+  userId String @unique
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
   avatarUrl String?
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
-
-  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 }
 
 model KYC {
-  id     String @id @default(uuid())
-  userId String @unique
+  id     String    @id @default(uuid())
+  userId String    @unique
+  user   User      @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   status KYCStatus @default(NOT_SUBMITTED)
   step   KYCStep   @default(NIN_REQUIRED)
 
-  // Identity
-  nin           String?   @db.VarChar(11)
-  bvn           String?   @db.VarChar(11)
+  // NIN/BVN
+  nin String? @db.VarChar(11)
+  bvn String? @db.VarChar(11)
+
   ninVerifiedAt DateTime?
   bvnVerifiedAt DateTime?
 
@@ -734,8 +735,6 @@ model KYC {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
-
   @@index([status])
   @@index([step])
   @@index([userId, status])
@@ -743,28 +742,30 @@ model KYC {
 }
 
 model OtpCode {
-  id        String     @id @default(uuid())
-  userId    String
+  id     String @id @default(uuid())
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
   purpose   OTPPurpose
   codeHash  String
   expiresAt DateTime
   usedAt    DateTime?
-  createdAt DateTime   @default(now())
 
-  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  createdAt DateTime @default(now())
 
   @@index([userId, purpose])
 }
 
 model RefreshToken {
-  id        String    @id @default(uuid())
-  userId    String
+  id     String @id @default(uuid())
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
   tokenHash String
   revokedAt DateTime?
   expiresAt DateTime
-  createdAt DateTime  @default(now())
 
-  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  createdAt DateTime @default(now())
 
   @@index([userId])
 }

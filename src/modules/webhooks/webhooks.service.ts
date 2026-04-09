@@ -11,7 +11,9 @@ import {
   TransactionStatus,
   TransactionType,
 } from '@prisma/client';
-import { PrismaService } from '../../prisma';
+import { InjectQueue } from '@nestjs/bullmq';
+import { Queue } from 'bullmq';
+import { PrismaService } from '@/prisma';
 import { FlutterwaveProvider } from '../flutterwave/flutterwave.provider';
 import {
   FlwWebhookPayload,
@@ -41,12 +43,8 @@ export class WebhooksService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly flw: FlutterwaveProvider,
-<<<<<<< HEAD
-  ) { }
-=======
     @InjectQueue(AUTH_EVENTS_QUEUE) private readonly authEventsQueue: Queue,
   ) {}
->>>>>>> 1db6de562e4e0816e57ef70d4cf797cfaee8f391
 
   /**
    * Entry point for all Flutterwave webhooks.
@@ -418,6 +416,7 @@ export class WebhooksService {
           where: { id: transaction.id },
           data: {
             status: TransactionStatus.FAILED,
+            completedAt: new Date(),
             metadata: {
               ...(transaction.metadata as object),
               flwTransferId: data.id,
@@ -717,7 +716,7 @@ export class WebhooksService {
       where: { reference: txRef, status: TransactionStatus.PENDING },
       data: {
         status,
-        completedAt: status === TransactionStatus.SUCCESS ? new Date() : undefined,
+        completedAt: status !== TransactionStatus.PENDING ? new Date() : undefined,
       },
     });
   }

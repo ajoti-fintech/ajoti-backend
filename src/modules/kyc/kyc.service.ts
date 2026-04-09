@@ -5,7 +5,7 @@ import {
   UnprocessableEntityException,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { PrismaService } from '../../prisma';
+import { PrismaService } from 'src/prisma/prisma.service';
 import { IdentityVerificationService } from './identity-verification.service';
 import { KYCStatus, KYCStep, KYC } from '@prisma/client';
 import {
@@ -122,7 +122,7 @@ export class KycService {
     }
 
     // Update KYC record with transaction
-    const updatedKyc = await this.prisma.$transaction(async (tx: Prisma.TransactionClient) => {
+    const updatedKyc = await this.prisma.$transaction(async (tx) => {
       // Verify user exists
       const user = await tx.user.findUnique({
         where: { id: userId },
@@ -190,7 +190,7 @@ export class KycService {
     }
 
     // Update KYC record with transaction
-    const updatedKyc = await this.prisma.$transaction(async (tx: Prisma.TransactionClient) => {
+    const updatedKyc = await this.prisma.$transaction(async (tx) => {
       // Verify user exists
       const user = await tx.user.findUnique({
         where: { id: userId },

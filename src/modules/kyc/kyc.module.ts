@@ -8,7 +8,6 @@ import { IdentityVerificationService } from './identity-verification.service';
 import { PrismaModule } from '@/prisma';
 import { AUTH_EVENTS_QUEUE } from '../auth/auth.events';
 import { VirtualAccountModule } from '../virtual-accounts/virtual-account.module';
-import { PrismaModule } from '../../prisma';
 
 @Module({
   imports: [
