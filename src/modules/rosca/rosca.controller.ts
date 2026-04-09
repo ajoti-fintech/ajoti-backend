@@ -26,6 +26,9 @@ import {
   RoscaMembershipResponseDto,
   AdminListCirclesQueryDto,
   JoinRequestSearchQueryDto,
+  AdminDashboardResponseDto,
+  PendingCircleOverviewDto,
+  JoinRequesterDossierDto,
   formatCircleResponse,
   formatMembershipResponse,
   RoscaCycleScheduleResponseDto,
@@ -146,7 +149,10 @@ export class RoscaAdminController {
 
   @Get('dashboard')
   @HttpCode(HttpStatus.OK)
-  @ApiOperation({ summary: '[Admin] Get dashboard summary: total groups, next deadline, pending requests' })
+  @ApiOperation({
+    summary: '[Admin] Get dashboard summary: total groups, next deadline, pending requests',
+  })
+  @ApiResponse({ status: 200, type: AdminDashboardResponseDto })
   async getDashboard(@CurrentUser('userId') adminId: string) {
     const data = await this.roscaService.getAdminDashboard(adminId);
     return { success: true, message: 'Dashboard retrieved successfully', data };
@@ -154,7 +160,10 @@ export class RoscaAdminController {
 
   @Get('join-requests')
   @HttpCode(HttpStatus.OK)
-  @ApiOperation({ summary: '[Admin] List all circles with pending join requests, grouped by circle' })
+  @ApiOperation({
+    summary: '[Admin] List all circles with pending join requests, grouped by circle',
+  })
+  @ApiResponse({ status: 200, type: [PendingCircleOverviewDto] })
   async getPendingJoinRequestsOverview(@CurrentUser('userId') adminId: string) {
     const data = await this.roscaService.getPendingJoinRequestsOverview(adminId);
     return { success: true, message: 'Pending join requests retrieved successfully', data };
@@ -162,7 +171,10 @@ export class RoscaAdminController {
 
   @Get(':circleId/join-requests')
   @HttpCode(HttpStatus.OK)
-  @ApiOperation({ summary: '[Admin] Get requester dossiers for a specific circle, with optional name search' })
+  @ApiOperation({
+    summary: '[Admin] Get requester dossiers for a specific circle, with optional name search',
+  })
+  @ApiResponse({ status: 200, type: [JoinRequesterDossierDto] })
   async getCircleJoinRequests(
     @Param('circleId') circleId: string,
     @CurrentUser('userId') adminId: string,
@@ -214,7 +226,10 @@ export class RoscaAdminController {
   @ApiOperation({ summary: '[Admin] Verify and activate a ROSCA circle' })
   @ApiResponse({ status: 200, type: RoscaCircleResponseDto })
   async activateCircle(@Param('circleId') circleId: string, @Body() dto: ActivateCircleDto) {
-    const circle = await this.roscaService.activateCircle(circleId, new Date(dto.initialContributionDeadline));
+    const circle = await this.roscaService.activateCircle(
+      circleId,
+      new Date(dto.initialContributionDeadline),
+    );
     return {
       success: true,
       message: 'Circle verified and activated. Schedules generated.',

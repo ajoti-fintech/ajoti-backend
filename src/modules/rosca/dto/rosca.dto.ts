@@ -120,7 +120,8 @@ export class CreateRoscaCircleDto {
 export class ActivateCircleDto {
   @ApiProperty({
     example: '2026-03-01T00:00:00Z',
-    description: 'The deadline by which all members must make their first contribution. Payout occurs 24 hours after this.',
+    description:
+      'The deadline by which all members must make their first contribution. Payout occurs 24 hours after this.',
   })
   @IsDateString()
   @IsNotEmpty()
@@ -284,6 +285,86 @@ export class UpdatePayoutConfigDto {
   @ValidateNested({ each: true })
   @Type(() => MemberPositionAssignmentDto)
   assignments?: MemberPositionAssignmentDto[];
+}
+
+// ── Dashboard ──────────────────────────────────
+
+export class DashboardNextDeadlineDto {
+  @ApiProperty({ example: 'January Savers' })
+  groupName!: string;
+
+  @ApiProperty({ example: '2026-05-01T10:00:00.000Z' })
+  deadline!: Date;
+}
+
+export class DashboardPendingBreakdownDto {
+  @ApiProperty({ example: 'January Savers' })
+  groupName!: string;
+
+  @ApiProperty({ example: 3 })
+  pendingCount!: number;
+}
+
+export class DashboardPendingRequestsDto {
+  @ApiProperty({ example: 7 })
+  total!: number;
+
+  @ApiProperty({ type: [DashboardPendingBreakdownDto] })
+  breakdown!: DashboardPendingBreakdownDto[];
+}
+
+export class AdminDashboardResponseDto {
+  @ApiProperty({ example: 4 })
+  totalGroups!: number;
+
+  @ApiProperty({ type: DashboardNextDeadlineDto, nullable: true })
+  nextDeadline!: DashboardNextDeadlineDto | null;
+
+  @ApiProperty({ type: DashboardPendingRequestsDto })
+  pendingJoinRequests!: DashboardPendingRequestsDto;
+}
+
+// ── Join Request Management ─────────────────────
+
+export class PendingCircleOverviewDto {
+  @ApiProperty()
+  circleId!: string;
+
+  @ApiProperty({ example: 'January Savers' })
+  name!: string;
+
+  @ApiProperty({ example: 3 })
+  pendingCount!: number;
+
+  @ApiProperty({ example: '2026-04-01T08:00:00.000Z', nullable: true })
+  oldestRequestAt!: Date | null;
+}
+
+export class JoinRequesterDossierDto {
+  @ApiProperty()
+  userId!: string;
+
+  @ApiProperty()
+  membershipId!: string;
+
+  @ApiProperty({ example: 'John Doe' })
+  name!: string;
+
+  @ApiProperty({ example: '2026-04-01T08:00:00.000Z' })
+  requestedAt!: Date;
+
+  @ApiProperty({ example: 658, description: 'ATI display score (300–850)' })
+  trustScore!: number;
+
+  @ApiProperty({
+    example: 87,
+    nullable: true,
+    description: 'Percentage of payments made on time. Null if user has no payment history yet.',
+  })
+  onTimePaymentRate!: number | null;
+
+  @ApiProperty({ example: 4, description: 'Number of ROSCA cycles completed across all groups' })
+  completedCycles!: number;
 }
 
 // ────────────────────────────────────────────────
