@@ -416,6 +416,7 @@ export class WebhooksService {
           where: { id: transaction.id },
           data: {
             status: TransactionStatus.FAILED,
+            completedAt: new Date(),
             metadata: {
               ...(transaction.metadata as object),
               flwTransferId: data.id,
@@ -715,7 +716,7 @@ export class WebhooksService {
       where: { reference: txRef, status: TransactionStatus.PENDING },
       data: {
         status,
-        completedAt: status === TransactionStatus.SUCCESS ? new Date() : undefined,
+        completedAt: status !== TransactionStatus.PENDING ? new Date() : undefined,
       },
     });
   }

@@ -667,6 +667,7 @@ enum OTPPurpose {
   VERIFICATION
   RESET_PASSWORD
   KYC_VERIFICATION
+  EMAIL_CHANGE
 
   // Add more purposes as needed
   // WITHDRAWAL_APPROVAL
@@ -711,9 +712,10 @@ enum Gender {
 }
 
 model User {
-  id         String  @id @default(uuid())
-  email      String  @unique
-  firstName  String
+  id           String  @id @default(uuid())
+  email        String  @unique
+  pendingEmail String? @unique
+  firstName    String
   lastName   String
   password   String
   dob        DateTime @default(now())
