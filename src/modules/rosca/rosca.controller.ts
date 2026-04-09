@@ -36,6 +36,11 @@ import {
   formatScheduleResponse,
   UpdatePayoutConfigDto,
   UpdateCircleDto,
+  MemberProgressResponseDto,
+  ContributionsInResponseDto,
+  DisbursementScheduleResponseDto,
+  FinancialHealthResponseDto,
+  RoundQueryDto,
 } from './dto/rosca.dto';
 import { Roles } from '@/common/decorators/roles.decorator';
 
@@ -241,6 +246,67 @@ export class RoscaAdminController {
       message: 'Admin circles retrieved successfully',
       data: circles.map(formatCircleResponse),
     };
+  }
+
+  @Get(':circleId/members/progress')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: '[Admin] Get member lifecycle progress for a circle' })
+  @ApiResponse({ status: 200, type: MemberProgressResponseDto })
+  async getMemberProgress(
+    @Param('circleId') circleId: string,
+    @CurrentUser('userId') adminId: string,
+  ) {
+    const data = await this.roscaService.getMemberProgress(circleId, adminId);
+    return { success: true, message: 'Member progress retrieved successfully', data };
+  }
+
+  @Get(':circleId/contributions')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: '[Admin] Get contributions received for a specific round' })
+  @ApiResponse({ status: 200, type: ContributionsInResponseDto })
+  async getContributionsIn(
+    @Param('circleId') circleId: string,
+    @CurrentUser('userId') adminId: string,
+    @Query() query: RoundQueryDto,
+  ) {
+    const data = await this.roscaService.getContributionsIn(circleId, adminId, query.round);
+    return { success: true, message: 'Contributions retrieved successfully', data };
+  }
+
+  @Get(':circleId/disbursements')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: '[Admin] Get full disbursement schedule for a circle' })
+  @ApiResponse({ status: 200, type: DisbursementScheduleResponseDto })
+  async getDisbursementSchedule(
+    @Param('circleId') circleId: string,
+    @CurrentUser('userId') adminId: string,
+  ) {
+    const data = await this.roscaService.getDisbursementSchedule(circleId, adminId);
+    return { success: true, message: 'Disbursement schedule retrieved successfully', data };
+  }
+
+  @Get(':circleId/financial-health')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: '[Admin] Get per-cycle financial health overview' })
+  @ApiResponse({ status: 200, type: FinancialHealthResponseDto })
+  async getFinancialHealth(
+    @Param('circleId') circleId: string,
+    @CurrentUser('userId') adminId: string,
+  ) {
+    const data = await this.roscaService.getFinancialHealth(circleId, adminId);
+    return { success: true, message: 'Financial health retrieved successfully', data };
+  }
+
+  @Post(':circleId/notify-missing')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: '[Admin] Notify members who have not contributed in a given round' })
+  async notifyMissingMembers(
+    @Param('circleId') circleId: string,
+    @CurrentUser('userId') adminId: string,
+    @Query() query: RoundQueryDto,
+  ) {
+    const data = await this.roscaService.notifyMissingMembers(circleId, adminId, query.round);
+    return { success: true, message: `Notified ${data.notified} missing member(s) for cycle ${data.cycleNumber}`, data };
   }
 
   @Get(':circleId')
