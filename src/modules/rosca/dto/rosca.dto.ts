@@ -267,6 +267,26 @@ export class UpdatePayoutConfigDto {
   assignments?: MemberPositionAssignmentDto[];
 }
 
+// ── My Pending Join Requests ────────────────────
+
+export class PendingJoinRequestCircleSummaryDto {
+  @ApiProperty() id!: string;
+  @ApiProperty() name!: string;
+  @ApiProperty({ example: '500000' }) contributionAmount!: string;
+  @ApiProperty() frequency!: string;
+  @ApiProperty() maxSlots!: number;
+  @ApiProperty() filledSlots!: number;
+  @ApiProperty() status!: string;
+}
+
+export class MyPendingJoinRequestDto {
+  @ApiProperty() membershipId!: string;
+  @ApiProperty() circleId!: string;
+  @ApiProperty({ example: '50000' }) collateralReserved!: string;
+  @ApiProperty({ nullable: true }) requestedAt!: Date | null;
+  @ApiProperty({ type: PendingJoinRequestCircleSummaryDto }) circle!: PendingJoinRequestCircleSummaryDto;
+}
+
 // ── Dashboard ──────────────────────────────────
 
 export class DashboardNextDeadlineDto {

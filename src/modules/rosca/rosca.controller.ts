@@ -29,6 +29,7 @@ import {
   AdminDashboardResponseDto,
   PendingCircleOverviewDto,
   JoinRequesterDossierDto,
+  MyPendingJoinRequestDto,
   formatCircleResponse,
   formatMembershipResponse,
   RoscaCycleScheduleResponseDto,
@@ -56,6 +57,43 @@ export class RoscaController {
       message: 'Circles retrieved successfully',
       data: circles.map(formatCircleResponse),
     };
+  }
+
+  @Get('my-join-requests')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Get all pending join requests submitted by the current user' })
+  @ApiResponse({ status: 200, type: [MyPendingJoinRequestDto] })
+  async getMyPendingJoinRequests(@CurrentUser('userId') userId: string) {
+    const memberships = await this.roscaService.getMyPendingJoinRequests(userId);
+    return {
+      success: true,
+      message: 'Pending join requests retrieved successfully',
+      data: memberships.map((m) => ({
+        membershipId: m.id,
+        circleId: m.circleId,
+        collateralReserved: m.collateralAmount.toString(),
+        requestedAt: m.joinedAt,
+        circle: {
+          id: m.circle.id,
+          name: m.circle.name,
+          contributionAmount: m.circle.contributionAmount.toString(),
+          frequency: m.circle.frequency,
+          maxSlots: m.circle.maxSlots,
+          filledSlots: m.circle.filledSlots,
+          status: m.circle.status,
+        },
+      })),
+    };
+  }
+
+  @Delete(':circleId/join-requests')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Cancel a pending join request and reclaim reserved collateral' })
+  async cancelJoinRequest(
+    @Param('circleId') circleId: string,
+    @CurrentUser('userId') userId: string,
+  ) {
+    return await this.roscaService.cancelJoinRequest(userId, circleId);
   }
 
   @Get('my-participations')

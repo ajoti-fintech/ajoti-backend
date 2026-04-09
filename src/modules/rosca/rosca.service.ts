@@ -466,6 +466,69 @@ export class RoscaService {
     );
   }
 
+  async getMyPendingJoinRequests(userId: string) {
+    return await this.prisma.roscaMembership.findMany({
+      where: { userId, status: MembershipStatus.PENDING },
+      include: {
+        circle: {
+          select: {
+            id: true,
+            name: true,
+            contributionAmount: true,
+            frequency: true,
+            maxSlots: true,
+            filledSlots: true,
+            status: true,
+          },
+        },
+      },
+      orderBy: { joinedAt: 'desc' },
+    });
+  }
+
+  async cancelJoinRequest(userId: string, circleId: string) {
+    return await this.prisma.$transaction(
+      async (tx) => {
+        const membership = await tx.roscaMembership.findUnique({
+          where: { circleId_userId: { circleId, userId } },
+        });
+
+        if (!membership) throw new NotFoundException('No join request found for this circle');
+
+        if (membership.status !== MembershipStatus.PENDING) {
+          throw new BadRequestException(
+            'Only pending join requests can be cancelled. Use the leave endpoint if you are already an active member.',
+          );
+        }
+
+        if (membership.collateralAmount > 0n) {
+          const wallet = await tx.wallet.findUnique({ where: { userId } });
+          if (!wallet) throw new NotFoundException('Wallet not found');
+
+          await this.ledger.writeEntry(
+            {
+              walletId: wallet.id,
+              entryType: EntryType.RELEASE,
+              movementType: MovementType.TRANSFER,
+              bucketType: BucketType.ROSCA,
+              amount: membership.collateralAmount,
+              reference: `COLL-REL-${crypto.randomUUID()}`,
+              sourceType: LedgerSourceType.COLLATERAL_RESERVE,
+              sourceId: membership.id,
+              metadata: { circleId, action: 'JOIN_REQUEST_CANCELLED' },
+            },
+            tx,
+          );
+        }
+
+        await tx.roscaMembership.delete({ where: { id: membership.id } });
+
+        return { success: true, message: 'Join request cancelled and collateral returned' };
+      },
+      { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
+    );
+  }
+
   async getSchedules(circleId: string) {
     return await this.prisma.roscaCycleSchedule.findMany({
       where: {
