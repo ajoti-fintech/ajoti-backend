@@ -297,8 +297,23 @@ model RoscaCircle {
   payouts       RoscaPayout[]
   loans         Loan[]
   debts         MissedContributionDebt[]
+  invites       RoscaInvite[]
 
   @@map("rosca_circles")
+}
+
+// 2b. ROSCA INVITES
+model RoscaInvite {
+  id        String      @id @default(cuid())
+  circleId  String      @map("circle_id")
+  circle    RoscaCircle @relation(fields: [circleId], references: [id])
+  email     String      // who was invited
+  token     String      @unique @default(cuid())
+  expiresAt DateTime    @map("expires_at")
+  usedAt    DateTime?   @map("used_at")
+  createdAt DateTime    @default(now()) @map("created_at")
+
+  @@map("rosca_invites")
 }
 
 enum CycleFrequency {
