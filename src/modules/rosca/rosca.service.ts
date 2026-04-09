@@ -365,7 +365,6 @@ export class RoscaService {
 
     const requiredCollateral = this.calculateCollateral(
       circle.contributionAmount,
-      circle.collateralPercentage,
     );
 
     const userMembership = circle.memberships.find((m) => m.userId === userId);
@@ -747,7 +746,6 @@ export class RoscaService {
 
         const collateralAmount = this.calculateCollateral(
           circle.contributionAmount,
-          circle.collateralPercentage,
         );
 
         const reserveRef = `COLL-RES-${crypto.randomUUID()}`;
@@ -876,10 +874,10 @@ export class RoscaService {
   // =========================================================================
 
   // FIX: rewritten to keep all arithmetic in BigInt, avoiding Number precision
-  // loss for amounts above 2^53 (≈ 90 trillion kobo). The percentage is scaled
-  // to an integer (e.g. 10.5% → 1050) and divided by 10000 at the end.
-  private calculateCollateral(contributionAmount: bigint, percentage: number): bigint {
-    return (contributionAmount * BigInt(Math.round(percentage * 100))) / 10000n;
+  // Collateral is fixed at 10% of the contribution amount platform-wide.
+  private calculateCollateral(contributionAmount: bigint): bigint {
+    const COLLATERAL_PERCENT = 10;
+    return (contributionAmount * BigInt(COLLATERAL_PERCENT)) / 100n;
   }
 
   // FIX: separated the cast failure from the "must be positive" check so

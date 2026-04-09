@@ -112,9 +112,9 @@ export class ContributionService {
           );
         }
         const isLate = now > schedule.contributionDeadline;
+        const LATE_PENALTY_PERCENT = 2; // Fixed platform rate: 2% of contribution amount
         const penalty = isLate
-          ? (circle.contributionAmount * BigInt(Math.round(circle.latePenaltyPercent * 100))) /
-            10000n
+          ? (circle.contributionAmount * BigInt(Math.round(LATE_PENALTY_PERCENT * 100))) / 10000n
           : 0n;
 
         // ── 5. Pre-generate IDs ────────────────────────────────────────────
@@ -174,7 +174,7 @@ export class ContributionService {
               reference: penaltyRef,
               sourceType: LedgerSourceType.PENALTY,
               sourceId: contributionId,
-              metadata: { circleId, cycleNumber, penaltyPercent: circle.latePenaltyPercent },
+              metadata: { circleId, cycleNumber, penaltyPercent: LATE_PENALTY_PERCENT },
             },
             tx,
           );

@@ -2,7 +2,6 @@
 import {
   IsEnum,
   IsNotEmpty,
-  IsNumber,
   IsOptional,
   IsString,
   Min,
@@ -89,12 +88,6 @@ export class CreateRoscaCircleDto {
   @Max(50)
   maxSlots!: number;
 
-  @ApiProperty({ example: 10, description: 'Collateral %' })
-  @IsNumber()
-  @Min(0)
-  @Max(100)
-  collateralPercentage!: number;
-
   @ApiProperty({ enum: PayoutLogic, example: PayoutLogic.TRUST_SCORE })
   @IsEnum(PayoutLogic)
   payoutLogic!: PayoutLogic;
@@ -109,12 +102,6 @@ export class CreateRoscaCircleDto {
   @IsEnum(CircleVisibility)
   visibility?: CircleVisibility;
 
-  @ApiProperty({ required: false })
-  @IsOptional()
-  @IsNumber()
-  @Min(0)
-  @Max(100)
-  latePenaltyPercent?: number;
 }
 
 export class ActivateCircleDto {
@@ -177,13 +164,6 @@ export class UpdateCircleDto {
   @IsOptional()
   initialContributionDeadline?: string;
 
-  @ApiPropertyOptional({ example: 5.0, description: 'Collateral %' })
-  @IsNumber()
-  @Min(0)
-  @Max(100)
-  @IsOptional()
-  collateralPercentage?: number;
-
   @ApiPropertyOptional({ enum: PayoutLogic })
   @IsEnum(PayoutLogic)
   @IsOptional()
@@ -239,7 +219,7 @@ export class RoscaCircleResponseDto {
     required: false,
   })
   initialContributionDeadline?: Date | null;
-  @ApiProperty() collateralPercentage!: number;
+  @ApiProperty({ example: 10, description: 'Fixed platform collateral rate (%)' }) collateralPercentage!: number;
   @ApiProperty({ type: AdminResponseDto })
   admin!: AdminResponseDto;
   @ApiProperty({ isArray: true, description: 'List of members in the circle' })
