@@ -18,6 +18,7 @@ import {
   MembershipStatus,
   ScheduleStatus,
   PayoutLogic,
+  PayoutStatus,
 } from '@prisma/client';
 import {
   AdminListCirclesQueryDto,
@@ -26,12 +27,14 @@ import {
   UpdateCircleDto,
 } from './dto/rosca.dto';
 import { PayoutSorter } from './payout-sorter.util';
+import { NotificationService } from '../notification/notification.service';
 
 @Injectable()
 export class RoscaService {
   constructor(
     private prisma: PrismaService,
     private ledger: LedgerService,
+    private notifications: NotificationService,
   ) {}
 
   // =========================================================================
@@ -73,13 +76,12 @@ export class RoscaService {
    * ACTIVATE circle → Generate schedules (R5)
    * Called by admin verification OR autoStartOnFull
    */
-  async activateCircle(circleId: string, startDate: Date) {
+  async activateCircle(circleId: string, initialContributionDeadline: Date) {
     const now = new Date();
     const bufferTime = 30 * 60 * 1000; // 30 minutes in milliseconds
 
-    // FIX: corrected error message — the guard rejects dates too far in the past
-    if (startDate.getTime() < now.getTime() - bufferTime) {
-      throw new BadRequestException('Start date must not be more than 30 minutes in the past');
+    if (initialContributionDeadline.getTime() < now.getTime() - bufferTime) {
+      throw new BadRequestException('Initial contribution deadline must not be more than 30 minutes in the past');
     }
 
     return await this.prisma.$transaction(
@@ -110,14 +112,14 @@ export class RoscaService {
           where: { id: circleId },
           data: {
             status: CircleStatus.ACTIVE,
-            startDate,
+            initialContributionDeadline,
             verifiedAt: new Date(),
             currentCycle: 1,
             durationCycles: actualMemberCount,
           },
         });
 
-        await this.generateSchedules(tx, circleId, startDate);
+        await this.generateSchedules(tx, circleId, initialContributionDeadline);
 
         await tx.auditLog.create({
           data: {
@@ -127,7 +129,7 @@ export class RoscaService {
             entityType: 'ROSCA_CIRCLE',
             entityId: circleId,
             before: { status: CircleStatus.DRAFT },
-            after: { status: CircleStatus.ACTIVE, startDate },
+            after: { status: CircleStatus.ACTIVE, initialContributionDeadline },
             metadata: { autoActivation: false },
           },
         });
@@ -144,7 +146,7 @@ export class RoscaService {
    * Schedule Generation Engine — Deterministic (R5)
    * Called only at activation, never manually
    */
-  private async generateSchedules(tx: Prisma.TransactionClient, circleId: string, startDate: Date) {
+  private async generateSchedules(tx: Prisma.TransactionClient, circleId: string, initialContributionDeadline: Date) {
     const circle = await tx.roscaCircle.findUnique({
       where: { id: circleId },
     });
@@ -187,17 +189,16 @@ export class RoscaService {
     );
 
     const schedules = [];
-    let currentDate = new Date(startDate);
+    let currentDate = new Date(initialContributionDeadline);
 
     for (let i = 1; i <= circle.durationCycles; i++) {
-      // FIX: capture the deadline first, then advance currentDate AFTER.
-      // Previously addFrequency was called mid-loop but its result was
-      // immediately overwritten by `currentDate = contributionDeadline`,
-      // causing every cycle to produce the same deadline date.
       const contributionDeadline = new Date(currentDate);
 
+      // Payout occurs 24 hours after the contribution deadline.
+      // Contributions within this 24h window are accepted but marked late.
+      // Contributions after the payout date are considered missed.
       const payoutDate = new Date(contributionDeadline);
-      payoutDate.setDate(payoutDate.getDate() + 3);
+      payoutDate.setTime(payoutDate.getTime() + 24 * 60 * 60 * 1000);
 
       const recipientIndex = (i - 1) % sortedMembers.length;
       const recipientId = sortedMembers[recipientIndex].userId;
@@ -361,13 +362,19 @@ export class RoscaService {
 
     if (!circle) throw new NotFoundException('Circle not found');
 
+    // PRIVATE circles are only visible to the admin and existing members
+    if (circle.visibility === 'PRIVATE') {
+      const isMember = circle.memberships.some((m) => m.userId === userId);
+      const isAdmin = circle.adminId === userId;
+      if (!isMember && !isAdmin) throw new ForbiddenException('This is a private circle');
+    }
+
     // FIX: use filledSlots (live member count) instead of maxSlots so the pot
     // is not overstated for circles that are not yet full.
     const totalPot = circle.contributionAmount * BigInt(circle.filledSlots);
 
     const requiredCollateral = this.calculateCollateral(
       circle.contributionAmount,
-      circle.collateralPercentage,
     );
 
     const userMembership = circle.memberships.find((m) => m.userId === userId);
@@ -469,6 +476,69 @@ export class RoscaService {
     );
   }
 
+  async getMyPendingJoinRequests(userId: string) {
+    return await this.prisma.roscaMembership.findMany({
+      where: { userId, status: MembershipStatus.PENDING },
+      include: {
+        circle: {
+          select: {
+            id: true,
+            name: true,
+            contributionAmount: true,
+            frequency: true,
+            maxSlots: true,
+            filledSlots: true,
+            status: true,
+          },
+        },
+      },
+      orderBy: { joinedAt: 'desc' },
+    });
+  }
+
+  async cancelJoinRequest(userId: string, circleId: string) {
+    return await this.prisma.$transaction(
+      async (tx) => {
+        const membership = await tx.roscaMembership.findUnique({
+          where: { circleId_userId: { circleId, userId } },
+        });
+
+        if (!membership) throw new NotFoundException('No join request found for this circle');
+
+        if (membership.status !== MembershipStatus.PENDING) {
+          throw new BadRequestException(
+            'Only pending join requests can be cancelled. Use the leave endpoint if you are already an active member.',
+          );
+        }
+
+        if (membership.collateralAmount > 0n) {
+          const wallet = await tx.wallet.findUnique({ where: { userId } });
+          if (!wallet) throw new NotFoundException('Wallet not found');
+
+          await this.ledger.writeEntry(
+            {
+              walletId: wallet.id,
+              entryType: EntryType.RELEASE,
+              movementType: MovementType.TRANSFER,
+              bucketType: BucketType.ROSCA,
+              amount: membership.collateralAmount,
+              reference: `COLL-REL-${crypto.randomUUID()}`,
+              sourceType: LedgerSourceType.COLLATERAL_RESERVE,
+              sourceId: membership.id,
+              metadata: { circleId, action: 'JOIN_REQUEST_CANCELLED' },
+            },
+            tx,
+          );
+        }
+
+        await tx.roscaMembership.delete({ where: { id: membership.id } });
+
+        return { success: true, message: 'Join request cancelled and collateral returned' };
+      },
+      { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
+    );
+  }
+
   async getSchedules(circleId: string) {
     return await this.prisma.roscaCycleSchedule.findMany({
       where: {
@@ -539,6 +609,155 @@ export class RoscaService {
     });
   }
 
+  // =========================================================================
+  // JOIN REQUEST MANAGEMENT
+  // =========================================================================
+
+  /**
+   * Returns all circles managed by the admin that have at least one pending
+   * join request. Each entry includes the circle id, name, and pending count.
+   * Ordered by oldest pending request first (most urgent at top).
+   */
+  async getPendingJoinRequestsOverview(adminId: string) {
+    const circles = await this.prisma.roscaCircle.findMany({
+      where: {
+        adminId,
+        memberships: { some: { status: MembershipStatus.PENDING } },
+      },
+      select: {
+        id: true,
+        name: true,
+        memberships: {
+          where: { status: MembershipStatus.PENDING },
+          select: { joinedAt: true },
+          orderBy: { joinedAt: 'asc' },
+        },
+      },
+    });
+
+    return circles
+      .map((c) => ({
+        circleId: c.id,
+        name: c.name,
+        pendingCount: c.memberships.length,
+        oldestRequestAt: c.memberships[0]?.joinedAt ?? null,
+      }))
+      .sort((a, b) => {
+        if (!a.oldestRequestAt) return 1;
+        if (!b.oldestRequestAt) return -1;
+        return a.oldestRequestAt.getTime() - b.oldestRequestAt.getTime();
+      });
+  }
+
+  /**
+   * Returns the full requester dossier for all pending members in a specific
+   * circle. Supports optional name search scoped to that circle only.
+   */
+  async getCircleJoinRequests(circleId: string, adminId: string, search?: string) {
+    const circle = await this.prisma.roscaCircle.findUnique({
+      where: { id: circleId },
+      select: { adminId: true },
+    });
+    if (!circle) throw new NotFoundException('Circle not found');
+    if (circle.adminId !== adminId)
+      throw new ForbiddenException('Not authorized to manage this circle');
+
+    const memberships = await this.prisma.roscaMembership.findMany({
+      where: {
+        circleId,
+        status: MembershipStatus.PENDING,
+        ...(search && {
+          user: {
+            OR: [
+              { firstName: { contains: search, mode: 'insensitive' } },
+              { lastName: { contains: search, mode: 'insensitive' } },
+            ],
+          },
+        }),
+      },
+      include: {
+        user: {
+          select: {
+            id: true,
+            firstName: true,
+            lastName: true,
+            userTrustStats: true,
+          },
+        },
+      },
+      orderBy: { joinedAt: 'asc' },
+    });
+
+    return memberships.map((m) => {
+      const stats = m.user.userTrustStats;
+      const displayScore = stats ? Math.round(300 + stats.trustScore * 5.5) : 575;
+      const onTimeRate =
+        stats && stats.totalExpectedPayments > 0
+          ? Math.round((stats.totalOnTimePayments / stats.totalExpectedPayments) * 100)
+          : null;
+
+      return {
+        userId: m.userId,
+        membershipId: m.id,
+        name: `${m.user.firstName} ${m.user.lastName}`,
+        requestedAt: m.joinedAt,
+        trustScore: displayScore,
+        onTimePaymentRate: onTimeRate,
+        completedCycles: m.completedCycles,
+      };
+    });
+  }
+
+  // =========================================================================
+  // ADMIN DASHBOARD
+  // =========================================================================
+
+  async getAdminDashboard(adminId: string) {
+    const now = new Date();
+
+    const [circles, nextSchedule] = await Promise.all([
+      this.prisma.roscaCircle.findMany({
+        where: { adminId },
+        select: {
+          id: true,
+          name: true,
+          memberships: {
+            where: { status: MembershipStatus.PENDING },
+            select: { id: true },
+          },
+        },
+      }),
+      this.prisma.roscaCycleSchedule.findFirst({
+        where: {
+          circle: { adminId },
+          status: ScheduleStatus.UPCOMING,
+          contributionDeadline: { gte: now },
+          obsoletedAt: null,
+        },
+        orderBy: { contributionDeadline: 'asc' },
+        select: {
+          contributionDeadline: true,
+          circle: { select: { name: true } },
+        },
+      }),
+    ]);
+
+    const totalPendingRequests = circles.reduce((sum, c) => sum + c.memberships.length, 0);
+
+    return {
+      totalGroups: circles.length,
+      nextDeadline: nextSchedule
+        ? { groupName: nextSchedule.circle.name, deadline: nextSchedule.contributionDeadline }
+        : null,
+      pendingJoinRequests: {
+        total: totalPendingRequests,
+        breakdown: circles
+          .filter((c) => c.memberships.length > 0)
+          .map((c) => ({ groupName: c.name, pendingCount: c.memberships.length })),
+      },
+    };
+  }
+
   async adminListAllCircles(query: AdminListCirclesQueryDto) {
     const { status, adminId } = query;
 
@@ -579,6 +798,10 @@ export class RoscaService {
         const circle = await tx.roscaCircle.findUnique({ where: { id: circleId } });
         if (!circle) throw new NotFoundException('Circle not found');
 
+        if (circle.visibility === 'PRIVATE') {
+          throw new BadRequestException('This is a private circle. You must use an invite link to join.');
+        }
+
         if (circle.status !== CircleStatus.DRAFT && circle.status !== CircleStatus.ACTIVE) {
           throw new BadRequestException('Circle not accepting members');
         }
@@ -600,7 +823,6 @@ export class RoscaService {
 
         const collateralAmount = this.calculateCollateral(
           circle.contributionAmount,
-          circle.collateralPercentage,
         );
 
         const reserveRef = `COLL-RES-${crypto.randomUUID()}`;
@@ -725,14 +947,344 @@ export class RoscaService {
   }
 
   // =========================================================================
+  // ADMIN OVERSIGHT — Member Progress & Payment Visibility
+  // =========================================================================
+
+  private async assertAdminOwnsCircle(circleId: string, adminId: string) {
+    const circle = await this.prisma.roscaCircle.findUnique({
+      where: { id: circleId },
+      select: {
+        adminId: true,
+        currentCycle: true,
+        durationCycles: true,
+        contributionAmount: true,
+        filledSlots: true,
+      },
+    });
+    if (!circle) throw new NotFoundException('Circle not found');
+    if (circle.adminId !== adminId)
+      throw new ForbiddenException('You do not have permission to manage this circle');
+    return circle;
+  }
+
+  async getMemberProgress(circleId: string, adminId: string) {
+    const circle = await this.assertAdminOwnsCircle(circleId, adminId);
+
+    const [memberships, completedPayouts] = await Promise.all([
+      this.prisma.roscaMembership.findMany({
+        where: { circleId, status: { in: [MembershipStatus.ACTIVE, MembershipStatus.COMPLETED] } },
+        include: { user: { select: { firstName: true, lastName: true } } },
+        orderBy: { payoutPosition: 'asc' },
+      }),
+      this.prisma.roscaPayout.findMany({
+        where: { circleId, status: PayoutStatus.COMPLETED },
+        select: { recipientId: true },
+      }),
+    ]);
+
+    const paidRecipientIds = new Set(completedPayouts.map((p) => p.recipientId));
+
+    return {
+      circleId,
+      durationCycles: circle.durationCycles,
+      members: memberships.map((m) => ({
+        userId: m.userId,
+        name: `${m.user.firstName} ${m.user.lastName}`,
+        completedCycles: m.completedCycles,
+        durationCycles: circle.durationCycles,
+        payoutStatus: paidRecipientIds.has(m.userId) ? 'PAID' : 'UPCOMING',
+        payoutPosition: m.payoutPosition,
+        totalLatePayments: m.totalLatePayments,
+      })),
+    };
+  }
+
+  async getContributionsIn(circleId: string, adminId: string, round?: number) {
+    const circle = await this.assertAdminOwnsCircle(circleId, adminId);
+    const cycleNumber = round ?? circle.currentCycle;
+
+    const contributions = await this.prisma.roscaContribution.findMany({
+      where: { circleId, cycleNumber },
+      include: { user: { select: { id: true, firstName: true, lastName: true } } },
+      orderBy: { paidAt: 'asc' },
+    });
+
+    const totalCollected = contributions.reduce((sum, c) => sum + c.amount, 0n);
+    const totalPenalties = contributions.reduce((sum, c) => sum + c.penaltyAmount, 0n);
+
+    return {
+      circleId,
+      cycleNumber,
+      contributions: contributions.map((c) => ({
+        contributionId: c.id,
+        userId: c.userId,
+        memberName: `${c.user.firstName} ${c.user.lastName}`,
+        amount: c.amount.toString(),
+        penaltyAmount: c.penaltyAmount.toString(),
+        isLate: c.penaltyAmount > 0n,
+        paidAt: c.paidAt,
+      })),
+      totalCollected: totalCollected.toString(),
+      totalPenalties: totalPenalties.toString(),
+    };
+  }
+
+  async getDisbursementSchedule(circleId: string, adminId: string) {
+    await this.assertAdminOwnsCircle(circleId, adminId);
+
+    const schedules = await this.prisma.roscaCycleSchedule.findMany({
+      where: { circleId, obsoletedAt: null },
+      include: {
+        recipient: { select: { id: true, firstName: true, lastName: true } },
+        payout: { select: { status: true, amount: true, processedAt: true } },
+      },
+      orderBy: { cycleNumber: 'asc' },
+    });
+
+    return {
+      circleId,
+      schedules: schedules.map((s) => ({
+        cycleNumber: s.cycleNumber,
+        recipientId: s.recipientId,
+        recipientName: s.recipient ? `${s.recipient.firstName} ${s.recipient.lastName}` : null,
+        payoutDate: s.payoutDate,
+        contributionDeadline: s.contributionDeadline,
+        scheduleStatus: s.status,
+        payoutStatus: s.payout?.status ?? null,
+        amountPaidOut: s.payout?.amount?.toString() ?? null,
+        processedAt: s.payout?.processedAt ?? null,
+      })),
+    };
+  }
+
+  async getFinancialHealth(circleId: string, adminId: string) {
+    const circle = await this.assertAdminOwnsCircle(circleId, adminId);
+
+    const [schedules, contributionTotals] = await Promise.all([
+      this.prisma.roscaCycleSchedule.findMany({
+        where: { circleId, obsoletedAt: null },
+        select: { cycleNumber: true, contributionDeadline: true, status: true },
+        orderBy: { cycleNumber: 'asc' },
+      }),
+      this.prisma.roscaContribution.groupBy({
+        by: ['cycleNumber'],
+        where: { circleId },
+        _sum: { amount: true },
+        _count: { id: true },
+      }),
+    ]);
+
+    const totalsMap = new Map(
+      contributionTotals.map((t) => [
+        t.cycleNumber,
+        { collected: t._sum.amount ?? 0n, count: t._count.id },
+      ]),
+    );
+
+    const expectedPot = circle.contributionAmount * BigInt(circle.filledSlots);
+
+    return {
+      circleId,
+      contributionAmount: circle.contributionAmount.toString(),
+      filledSlots: circle.filledSlots,
+      cycles: schedules.map((s) => {
+        const { collected, count } = totalsMap.get(s.cycleNumber) ?? { collected: 0n, count: 0 };
+        const outstanding = expectedPot > collected ? expectedPot - collected : 0n;
+        return {
+          cycleNumber: s.cycleNumber,
+          contributionDeadline: s.contributionDeadline,
+          scheduleStatus: s.status,
+          expectedPot: expectedPot.toString(),
+          collected: collected.toString(),
+          outstanding: outstanding.toString(),
+          expectedCount: circle.filledSlots,
+          collectedCount: count,
+        };
+      }),
+    };
+  }
+
+  async notifyMissingMembers(circleId: string, adminId: string, round?: number) {
+    const circle = await this.assertAdminOwnsCircle(circleId, adminId);
+    const cycleNumber = round ?? circle.currentCycle;
+
+    const [members, contributed] = await Promise.all([
+      this.prisma.roscaMembership.findMany({
+        where: { circleId, status: MembershipStatus.ACTIVE },
+        select: { userId: true },
+      }),
+      this.prisma.roscaContribution.findMany({
+        where: { circleId, cycleNumber },
+        select: { userId: true },
+      }),
+    ]);
+
+    const contributedIds = new Set(contributed.map((c) => c.userId));
+    const missingUserIds = members.map((m) => m.userId).filter((id) => !contributedIds.has(id));
+
+    if (missingUserIds.length === 0) {
+      return { notified: 0, cycleNumber, message: 'All members have contributed for this cycle' };
+    }
+
+    await Promise.allSettled(
+      missingUserIds.map((userId) =>
+        this.notifications.createInAppNotification(
+          userId,
+          'Contribution Reminder',
+          `You have not yet contributed for cycle ${cycleNumber}. Please contribute before the deadline to avoid a late penalty.`,
+        ),
+      ),
+    );
+
+    return { notified: missingUserIds.length, cycleNumber };
+  }
+
+  // =========================================================================
+  // INVITE-ONLY GROUPS
+  // =========================================================================
+
+  async createInvite(circleId: string, adminId: string, email: string) {
+    const circle = await this.prisma.roscaCircle.findUnique({
+      where: { id: circleId },
+      select: { adminId: true, visibility: true, status: true, name: true },
+    });
+    if (!circle) throw new NotFoundException('Circle not found');
+    if (circle.adminId !== adminId) throw new ForbiddenException('Only the circle admin can send invites');
+    if (circle.visibility !== 'PRIVATE') throw new BadRequestException('Invites can only be sent for PRIVATE circles');
+    if (circle.status !== CircleStatus.DRAFT) throw new BadRequestException('Circle is no longer accepting new members');
+
+    // Revoke any existing unused invite for this email+circle before creating a fresh one
+    await this.prisma.roscaInvite.deleteMany({
+      where: { circleId, email, usedAt: null },
+    });
+
+    const expiresAt = new Date();
+    expiresAt.setDate(expiresAt.getDate() + 7); // 7-day expiry
+
+    const invite = await this.prisma.roscaInvite.create({
+      data: { circleId, email, expiresAt },
+    });
+
+    // Notify the invitee if they have an account
+    const user = await this.prisma.user.findUnique({ where: { email }, select: { id: true } });
+    if (user) {
+      await this.notifications.createInAppNotification(
+        user.id,
+        `You've been invited to join ${circle.name}`,
+        `You have a private invitation to join the savings group "${circle.name}". Use your invite link before it expires.`,
+      ).catch(() => {/* non-critical */});
+    }
+
+    return invite;
+  }
+
+  async listInvites(circleId: string, adminId: string) {
+    const circle = await this.prisma.roscaCircle.findUnique({
+      where: { id: circleId },
+      select: { adminId: true },
+    });
+    if (!circle) throw new NotFoundException('Circle not found');
+    if (circle.adminId !== adminId) throw new ForbiddenException('Only the circle admin can view invites');
+
+    return this.prisma.roscaInvite.findMany({
+      where: { circleId },
+      orderBy: { createdAt: 'desc' },
+    });
+  }
+
+  async revokeInvite(circleId: string, inviteId: string, adminId: string) {
+    const invite = await this.prisma.roscaInvite.findUnique({
+      where: { id: inviteId },
+      include: { circle: { select: { adminId: true } } },
+    });
+    if (!invite || invite.circleId !== circleId) throw new NotFoundException('Invite not found');
+    if (invite.circle.adminId !== adminId) throw new ForbiddenException('Only the circle admin can revoke invites');
+    if (invite.usedAt) throw new BadRequestException('Cannot revoke an already-used invite');
+
+    await this.prisma.roscaInvite.delete({ where: { id: inviteId } });
+    return { message: 'Invite revoked successfully' };
+  }
+
+  async joinByInvite(userId: string, token: string) {
+    return await this.prisma.$transaction(async (tx) => {
+      const invite = await tx.roscaInvite.findUnique({
+        where: { token },
+        include: { circle: true },
+      });
+
+      if (!invite) throw new NotFoundException('Invalid invite token');
+      if (invite.usedAt) throw new BadRequestException('This invite has already been used');
+      if (invite.expiresAt < new Date()) throw new BadRequestException('This invite has expired');
+
+      // Verify the accepting user's email matches the invite
+      const user = await tx.user.findUnique({ where: { id: userId }, select: { email: true } });
+      if (!user) throw new NotFoundException('User not found');
+      if (user.email.toLowerCase() !== invite.email.toLowerCase()) {
+        throw new ForbiddenException('This invite was sent to a different email address');
+      }
+
+      const circle = invite.circle;
+      if (circle.status !== CircleStatus.DRAFT) throw new BadRequestException('Circle is no longer accepting members');
+      if (circle.filledSlots >= circle.maxSlots) throw new BadRequestException('Circle is full');
+
+      const existing = await tx.roscaMembership.findUnique({
+        where: { circleId_userId: { circleId: circle.id, userId } },
+      });
+      if (existing) throw new ConflictException('Already a member or pending approval');
+
+      const wallet = await tx.wallet.findUnique({ where: { userId } });
+      if (!wallet) throw new NotFoundException('Wallet not found');
+
+      const membershipId = crypto.randomUUID();
+      const collateralAmount = this.calculateCollateral(circle.contributionAmount);
+      const reserveRef = `COLL-RES-${crypto.randomUUID()}`;
+
+      await this.ledger.writeEntry(
+        {
+          walletId: wallet.id,
+          entryType: EntryType.RESERVE,
+          movementType: MovementType.TRANSFER,
+          bucketType: BucketType.ROSCA,
+          amount: collateralAmount,
+          reference: reserveRef,
+          sourceType: LedgerSourceType.COLLATERAL_RESERVE,
+          sourceId: membershipId,
+          metadata: { circleId: circle.id, action: 'INVITE_JOIN' },
+        },
+        tx,
+      );
+
+      const membership = await tx.roscaMembership.create({
+        data: {
+          id: membershipId,
+          circleId: circle.id,
+          userId,
+          status: MembershipStatus.PENDING,
+          collateralAmount,
+          collateralReleased: false,
+          joinedAt: new Date(),
+        },
+      });
+
+      // Mark invite as used
+      await tx.roscaInvite.update({
+        where: { id: invite.id },
+        data: { usedAt: new Date() },
+      });
+
+      return membership;
+    });
+  }
+
+  // =========================================================================
   // UTILITIES
   // =========================================================================
 
   // FIX: rewritten to keep all arithmetic in BigInt, avoiding Number precision
-  // loss for amounts above 2^53 (≈ 90 trillion kobo). The percentage is scaled
-  // to an integer (e.g. 10.5% → 1050) and divided by 10000 at the end.
-  private calculateCollateral(contributionAmount: bigint, percentage: number): bigint {
-    return (contributionAmount * BigInt(Math.round(percentage * 100))) / 10000n;
+  // Collateral is fixed at 10% of the contribution amount platform-wide.
+  private calculateCollateral(contributionAmount: bigint): bigint {
+    const COLLATERAL_PERCENT = 10;
+    return (contributionAmount * BigInt(COLLATERAL_PERCENT)) / 100n;
   }
 
   // FIX: separated the cast failure from the "must be positive" check so

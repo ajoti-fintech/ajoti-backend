@@ -5,6 +5,8 @@ import { InjectQueue } from '@nestjs/bullmq';
 import { Queue } from 'bullmq';
 import { AUTH_EVENTS_QUEUE, AuthJobName } from '../auth/auth.events';
 import { LoanService } from '../loans/loans.service';
+import { TrustService } from '../trust/trust.service';
+import { CreditService } from '../credit/credit.service';
 import {
   Prisma,
   EntryType,
@@ -40,6 +42,8 @@ export class PayoutService {
     private prisma: PrismaService,
     private ledger: LedgerService,
     private loanService: LoanService,
+    private trustService: TrustService,
+    private creditService: CreditService,
     @InjectQueue(AUTH_EVENTS_QUEUE) private readonly authEventsQueue: Queue,
   ) {}
 
@@ -214,6 +218,12 @@ export class PayoutService {
 
     // Notify the winner AFTER the DB transaction commits.
     await this.enqueueTransactionEvent(result.recipientId, BigInt(result.amount), result.payoutId);
+
+    // Record missed contributions for members who didn't contribute this cycle.
+    // Done after commit so a trust score failure never rolls back the payout.
+    await this.recordMissedContributions(circleId, cycleNumber).catch((err) =>
+      this.logger.error(`Failed to record missed contributions for cycle ${cycleNumber}`, err),
+    );
 
     return result;
   }
@@ -467,6 +477,42 @@ export class PayoutService {
    * Enqueue a wallet.transaction.completed notification for the payout recipient.
    * Notification failure must never surface to the caller — payouts are already committed.
    */
+  /**
+   * After payout, find all active members who did NOT contribute this cycle
+   * and record them as missed in the trust score and credit systems.
+   */
+  private async recordMissedContributions(circleId: string, cycleNumber: number): Promise<void> {
+    const [memberships, contributions] = await Promise.all([
+      this.prisma.roscaMembership.findMany({
+        where: { circleId, status: MembershipStatus.ACTIVE },
+        select: { userId: true },
+      }),
+      this.prisma.roscaContribution.findMany({
+        where: { circleId, cycleNumber },
+        select: { membership: { select: { userId: true } } },
+      }),
+    ]);
+
+    const contributedUserIds = new Set(contributions.map((c) => c.membership.userId));
+
+    const missedUserIds = memberships
+      .map((m) => m.userId)
+      .filter((id) => !contributedUserIds.has(id));
+
+    await Promise.allSettled(
+      missedUserIds.map(async (userId) => {
+        await this.trustService.updateTrustScore(userId, { type: 'missed_payment' }, this.prisma);
+        await this.creditService.reportMissedContribution(userId);
+      }),
+    );
+
+    if (missedUserIds.length > 0) {
+      this.logger.log(
+        `Recorded missed contributions for ${missedUserIds.length} member(s) on cycle ${cycleNumber} of circle ${circleId}`,
+      );
+    }
+  }
+
   private async enqueueTransactionEvent(
     userId: string,
     amountKobo: bigint,

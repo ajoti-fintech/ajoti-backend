@@ -80,26 +80,33 @@ enum EntryType {
 }
 
 enum LedgerSourceType {
-  TRANSACTION        // External funding/withdrawal
-  ROSCA_CIRCLE       // General ROSCA movement
-  CONTRIBUTION       // Cycle contribution
-  COLLATERAL_RESERVE // Join-circle collateral lock
-  COLLATERAL_RELEASE // Collateral unlocked
-  PENALTY            // Late payment penalty
-  EXIT_PENALTY       // Early exit fee
-  TRUST_ADJUSTMENT   // Trust score change (admin)
-  ADMIN_ADJUSTMENT   // Manual correction
-  REVERSAL           // Compensating entry for failure
-  SYSTEM             // Automated internal jobs
-  LOAN               // Loan disbursement advance
+  TRANSACTION          // External funding/withdrawal
+  ROSCA_CIRCLE         // General ROSCA movement
+  CONTRIBUTION         // Cycle contribution
+  COLLATERAL_RESERVE   // Join-circle collateral lock
+  COLLATERAL_RELEASE   // Collateral unlocked
+  COLLATERAL_SEIZURE   // Collateral forfeited on missed payment
+  PENALTY              // Late payment penalty
+  EXIT_PENALTY         // Early exit fee
+  LIQUIDITY_BRIDGE     // Platform advance covering missed contribution shortfall
+  BRIDGE_REPAYMENT     // User repaying the liquidity bridge from held payout
+  DEBT_REPAYMENT       // General debt repayment entry (contribution/interest components)
+  HELD_PAYOUT_DEPOSIT  // Payout diverted into HELD_PAYOUT bucket
+  HELD_PAYOUT_RELEASE  // Surplus released from HELD_PAYOUT back to MAIN
+  TRUST_ADJUSTMENT     // Trust score change (admin)
+  ADMIN_ADJUSTMENT     // Manual correction
+  REVERSAL             // Compensating entry for failure
+  SYSTEM               // Automated internal jobs
+  LOAN                 // Loan disbursement advance
 }
 
 enum BucketType {
-  MAIN       // The unreserved/spendable balance
-  ROSCA      // Main Wallet <-> ROSCA Bucket
-  TARGET     // Main Wallet <-> TARGET Bucket
-  FIXED      // Main Wallet <-> FIXED Bucket
-  REMITTANCE // Main Wallet <-> REMITTANCE Bucket
+  MAIN        // The unreserved/spendable balance
+  ROSCA       // Collateral reserves for ROSCA membership
+  TARGET      // Main Wallet <-> TARGET Bucket
+  FIXED       // Main Wallet <-> FIXED Bucket
+  REMITTANCE  // Main Wallet <-> REMITTANCE Bucket
+  HELD_PAYOUT // Diverted payout held for debt settlement — user can view, cannot spend
 }
 
 enum MovementType {
@@ -273,7 +280,7 @@ model RoscaCircle {
   minTrustScoreRequired Int @default(0) @map("min_trust_score_required")
 
   // Dates
-  startDate           DateTime? @map("start_date")
+  initialContributionDeadline DateTime? @map("initial_contribution_deadline")
   startDateRangeMin   DateTime? @map("start_date_range_min")
   startDateRangeMax   DateTime? @map("start_date_range_max")
   recruitmentDeadline DateTime? @map("recruitment_deadline")
@@ -289,8 +296,24 @@ model RoscaCircle {
   contributions RoscaContribution[]
   payouts       RoscaPayout[]
   loans         Loan[]
+  debts         MissedContributionDebt[]
+  invites       RoscaInvite[]
 
   @@map("rosca_circles")
+}
+
+// 2b. ROSCA INVITES
+model RoscaInvite {
+  id        String      @id @default(cuid())
+  circleId  String      @map("circle_id")
+  circle    RoscaCircle @relation(fields: [circleId], references: [id])
+  email     String      // who was invited
+  token     String      @unique @default(cuid())
+  expiresAt DateTime    @map("expires_at")
+  usedAt    DateTime?   @map("used_at")
+  createdAt DateTime    @default(now()) @map("created_at")
+
+  @@map("rosca_invites")
 }
 
 enum CycleFrequency {
@@ -339,15 +362,22 @@ model RoscaMembership {
   totalLatePayments  Int    @default(0) @map("total_late_payments")
   totalPenaltiesPaid BigInt @default(0) @map("total_penalties_paid")
 
+  // Default recovery flags
+  hasReceivedPayout    Boolean @default(false) @map("has_received_payout")   // Set when this member receives their cycle payout
+  payoutLocked         Boolean @default(false) @map("payout_locked")         // Blocks payout withdrawal and loan access until debt cleared
+  circleJoinRestricted Boolean @default(false) @map("circle_join_restricted") // Set only for post-payout defaults — blocks joining/creating new circles
+
   // Timestamps
   joinedAt    DateTime? @map("joined_at")
   approvedAt  DateTime? @map("approved_at")
   completedAt DateTime? @map("completed_at")
+  defaultedAt DateTime? @map("defaulted_at")
   createdAt   DateTime  @default(now()) @map("created_at")
   updatedAt   DateTime  @updatedAt @map("updated_at")
 
   // Relations
   contributions RoscaContribution[]
+  debts         MissedContributionDebt[]
 
   @@unique([circleId, userId])
   @@map("rosca_memberships")
@@ -359,6 +389,7 @@ enum MembershipStatus {
   REJECTED
   COMPLETED
   EXITED
+  DEFAULTED // Missed contribution — collateral seized, debt outstanding
 }
 
 // 4. ROSCA CYCLE SCHEDULES — GENERATED AT ACTIVATION
@@ -461,7 +492,50 @@ enum PayoutStatus {
   FAILED
 }
 
-// 7. TRUST STATS — SYSTEM DERIVED ONLY
+// 7. MISSED CONTRIBUTION DEBTS — Created when a member misses a cycle
+// Tracks each debt component and repayment progress independently.
+// Repayment order: contribution → interest → bridge → collateral
+model MissedContributionDebt {
+  id           String          @id @default(uuid())
+  userId       String          @map("user_id")
+  user         User            @relation(fields: [userId], references: [id])
+  circleId     String          @map("circle_id")
+  circle       RoscaCircle     @relation(fields: [circleId], references: [id])
+  membershipId String          @map("membership_id")
+  membership   RoscaMembership @relation(fields: [membershipId], references: [id])
+  cycleNumber  Int             @map("cycle_number")
+
+  // Debt components in kobo
+  missedAmount      BigInt @map("missed_amount")              // The contribution amount that was missed
+  interestAmount    BigInt @default(0) @map("interest_amount") // 10% surcharge — only for post-payout defaults
+  bridgeAmount      BigInt @default(0) @map("bridge_amount")   // Amount the platform advanced via liquidity bridge
+  collateralDeficit BigInt @default(0) @map("collateral_deficit") // Collateral seized (partial coverage)
+
+  // Repayment progress in kobo — incremented as held payout settles each component
+  repaidContribution BigInt @default(0) @map("repaid_contribution")
+  repaidInterest     BigInt @default(0) @map("repaid_interest")
+  repaidBridge       BigInt @default(0) @map("repaid_bridge")
+  repaidCollateral   BigInt @default(0) @map("repaid_collateral")
+
+  isPostPayoutDefault Boolean    @default(false) @map("is_post_payout_default") // True if member had already received payout this circle
+  status              DebtStatus @default(OUTSTANDING)
+
+  settledAt DateTime? @map("settled_at")
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+
+  @@index([userId, status])
+  @@index([circleId, cycleNumber])
+  @@map("missed_contribution_debts")
+}
+
+enum DebtStatus {
+  OUTSTANDING      // Debt exists, no or partial repayment
+  PARTIALLY_REPAID // Some components settled
+  SETTLED          // All four components fully repaid
+}
+
+// 8. TRUST STATS — SYSTEM DERIVED ONLY
 model UserTrustStats {
   id     String @id @default(uuid())
   userId String @unique @map("user_id")
@@ -667,6 +741,7 @@ model User {
   userTrustStats      UserTrustStats?
   creditScore         CreditScore?
   loans               Loan[]
+  missedDebts         MissedContributionDebt[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt

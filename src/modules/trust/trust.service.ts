@@ -5,6 +5,7 @@ import { Prisma, UserTrustStats } from '@prisma/client';
 export type TrustScoreEvent =
   | { type: 'contribution'; onTime: boolean; isPostPayout?: boolean }
   | { type: 'missed_payment'; isPostPayout?: boolean }
+  | { type: 'missed_payment_post_payout_default' } // ×2.0 escalated penalty — member defaulted after receiving payout
   | { type: 'peer_rating'; rating: number } // rating: 1–5
   | { type: 'cycle_reset' }; // call at the start of each new cycle
 
@@ -104,6 +105,16 @@ export class TrustService {
         data.expectedPaymentsLastCycle = { increment: 1 };
         data.consecutiveLatePayments = { increment: 1 };
         if (event.isPostPayout) data.expectedPostPayoutPayments = { increment: 1 };
+        break;
+
+      case 'missed_payment_post_payout_default':
+        // Escalated: counts as both a missed payment AND a default (×3 penalty in ATI)
+        data.totalExpectedPayments = { increment: 1 };
+        data.totalMissedPayments = { increment: 1 };
+        data.totalDefaults = { increment: 1 };
+        data.expectedPaymentsLastCycle = { increment: 1 };
+        data.expectedPostPayoutPayments = { increment: 1 };
+        data.consecutiveLatePayments = { increment: 1 };
         break;
 
       case 'peer_rating': {

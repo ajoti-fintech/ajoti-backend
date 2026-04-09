@@ -2,7 +2,6 @@
 import {
   IsEnum,
   IsNotEmpty,
-  IsNumber,
   IsOptional,
   IsString,
   Min,
@@ -25,6 +24,7 @@ import {
   CircleVisibility, // Added this since it was used in your DTO
 } from '@prisma/client';
 import { Type } from 'class-transformer';
+import { PayoutStatus } from '@prisma/client';
 
 // ────────────────────────────────────────────────
 // Custom validator
@@ -89,12 +89,6 @@ export class CreateRoscaCircleDto {
   @Max(50)
   maxSlots!: number;
 
-  @ApiProperty({ example: 10, description: 'Collateral %' })
-  @IsNumber()
-  @Min(0)
-  @Max(100)
-  collateralPercentage!: number;
-
   @ApiProperty({ enum: PayoutLogic, example: PayoutLogic.TRUST_SCORE })
   @IsEnum(PayoutLogic)
   payoutLogic!: PayoutLogic;
@@ -109,19 +103,17 @@ export class CreateRoscaCircleDto {
   @IsEnum(CircleVisibility)
   visibility?: CircleVisibility;
 
-  @ApiProperty({ required: false })
-  @IsOptional()
-  @IsNumber()
-  @Min(0)
-  @Max(100)
-  latePenaltyPercent?: number;
 }
 
 export class ActivateCircleDto {
-  @ApiProperty({ example: '2026-03-01T00:00:00Z' })
+  @ApiProperty({
+    example: '2026-03-01T00:00:00Z',
+    description:
+      'The deadline by which all members must make their first contribution. Payout occurs 24 hours after this.',
+  })
   @IsDateString()
   @IsNotEmpty()
-  startDate!: string;
+  initialContributionDeadline!: string;
 }
 
 export class ListCirclesQueryDto {
@@ -165,22 +157,25 @@ export class UpdateCircleDto {
   @IsOptional()
   maxSlots?: number;
 
-  @ApiPropertyOptional({ example: '2026-06-01T00:00:00Z' })
+  @ApiPropertyOptional({
+    example: '2026-06-01T00:00:00Z',
+    description: 'The deadline for the first contribution. Payout occurs 24 hours after this.',
+  })
   @IsDateString()
   @IsOptional()
-  startDate?: string;
-
-  @ApiPropertyOptional({ example: 5.0, description: 'Collateral %' })
-  @IsNumber()
-  @Min(0)
-  @Max(100)
-  @IsOptional()
-  collateralPercentage?: number;
+  initialContributionDeadline?: string;
 
   @ApiPropertyOptional({ enum: PayoutLogic })
   @IsEnum(PayoutLogic)
   @IsOptional()
   payoutLogic?: PayoutLogic;
+}
+
+export class JoinRequestSearchQueryDto {
+  @ApiPropertyOptional({ description: 'Search requesters by name within the selected group' })
+  @IsOptional()
+  @IsString()
+  search?: string;
 }
 
 export class AdminListCirclesQueryDto {
@@ -220,12 +215,12 @@ export class RoscaCircleResponseDto {
   @ApiProperty({ enum: CircleStatus }) status!: CircleStatus;
   @ApiProperty({
     example: '2026-05-01T10:00:00Z',
-    description: 'The start date of the ROSCA circle',
+    description: 'The deadline for the first contribution. Payout occurs 24 hours after this.',
     type: String,
     required: false,
   })
-  startDate?: Date | null;
-  @ApiProperty() collateralPercentage!: number;
+  initialContributionDeadline?: Date | null;
+  @ApiProperty({ example: 10, description: 'Fixed platform collateral rate (%)' }) collateralPercentage!: number;
   @ApiProperty({ type: AdminResponseDto })
   admin!: AdminResponseDto;
   @ApiProperty({ isArray: true, description: 'List of members in the circle' })
@@ -273,6 +268,220 @@ export class UpdatePayoutConfigDto {
   assignments?: MemberPositionAssignmentDto[];
 }
 
+// ── My Pending Join Requests ────────────────────
+
+export class PendingJoinRequestCircleSummaryDto {
+  @ApiProperty() id!: string;
+  @ApiProperty() name!: string;
+  @ApiProperty({ example: '500000' }) contributionAmount!: string;
+  @ApiProperty() frequency!: string;
+  @ApiProperty() maxSlots!: number;
+  @ApiProperty() filledSlots!: number;
+  @ApiProperty() status!: string;
+}
+
+export class MyPendingJoinRequestDto {
+  @ApiProperty() membershipId!: string;
+  @ApiProperty() circleId!: string;
+  @ApiProperty({ example: '50000' }) collateralReserved!: string;
+  @ApiProperty({ nullable: true }) requestedAt!: Date | null;
+  @ApiProperty({ type: PendingJoinRequestCircleSummaryDto }) circle!: PendingJoinRequestCircleSummaryDto;
+}
+
+// ── Dashboard ──────────────────────────────────
+
+export class DashboardNextDeadlineDto {
+  @ApiProperty({ example: 'January Savers' })
+  groupName!: string;
+
+  @ApiProperty({ example: '2026-05-01T10:00:00.000Z' })
+  deadline!: Date;
+}
+
+export class DashboardPendingBreakdownDto {
+  @ApiProperty({ example: 'January Savers' })
+  groupName!: string;
+
+  @ApiProperty({ example: 3 })
+  pendingCount!: number;
+}
+
+export class DashboardPendingRequestsDto {
+  @ApiProperty({ example: 7 })
+  total!: number;
+
+  @ApiProperty({ type: [DashboardPendingBreakdownDto] })
+  breakdown!: DashboardPendingBreakdownDto[];
+}
+
+export class AdminDashboardResponseDto {
+  @ApiProperty({ example: 4 })
+  totalGroups!: number;
+
+  @ApiProperty({ type: DashboardNextDeadlineDto, nullable: true })
+  nextDeadline!: DashboardNextDeadlineDto | null;
+
+  @ApiProperty({ type: DashboardPendingRequestsDto })
+  pendingJoinRequests!: DashboardPendingRequestsDto;
+}
+
+// ── Join Request Management ─────────────────────
+
+export class PendingCircleOverviewDto {
+  @ApiProperty()
+  circleId!: string;
+
+  @ApiProperty({ example: 'January Savers' })
+  name!: string;
+
+  @ApiProperty({ example: 3 })
+  pendingCount!: number;
+
+  @ApiProperty({ example: '2026-04-01T08:00:00.000Z', nullable: true })
+  oldestRequestAt!: Date | null;
+}
+
+export class JoinRequesterDossierDto {
+  @ApiProperty()
+  userId!: string;
+
+  @ApiProperty()
+  membershipId!: string;
+
+  @ApiProperty({ example: 'John Doe' })
+  name!: string;
+
+  @ApiProperty({ example: '2026-04-01T08:00:00.000Z' })
+  requestedAt!: Date;
+
+  @ApiProperty({ example: 658, description: 'ATI display score (300–850)' })
+  trustScore!: number;
+
+  @ApiProperty({
+    example: 87,
+    nullable: true,
+    description: 'Percentage of payments made on time. Null if user has no payment history yet.',
+  })
+  onTimePaymentRate!: number | null;
+
+  @ApiProperty({ example: 4, description: 'Number of ROSCA cycles completed across all groups' })
+  completedCycles!: number;
+}
+
+// ── Invite ─────────────────────────────────────
+
+export class CreateInviteDto {
+  @ApiProperty({ example: 'jane@example.com', description: 'Email address of the person to invite' })
+  @IsString()
+  @IsNotEmpty()
+  email!: string;
+}
+
+export class JoinByInviteDto {
+  @ApiProperty({ description: 'Invite token from the invite link' })
+  @IsString()
+  @IsNotEmpty()
+  token!: string;
+}
+
+export class InviteResponseDto {
+  @ApiProperty() id!: string;
+  @ApiProperty() circleId!: string;
+  @ApiProperty() email!: string;
+  @ApiProperty() token!: string;
+  @ApiProperty() expiresAt!: Date;
+  @ApiProperty({ nullable: true }) usedAt!: Date | null;
+  @ApiProperty() createdAt!: Date;
+}
+
+// ── Round query ────────────────────────────────
+
+export class RoundQueryDto {
+  @ApiPropertyOptional({ example: 2, description: 'Cycle number to filter by. Defaults to currentCycle.' })
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  round?: number;
+}
+
+// ── Tab 1: Member Progress ──────────────────────
+
+export class MemberProgressItemDto {
+  @ApiProperty() userId!: string;
+  @ApiProperty({ example: 'Jane Doe' }) name!: string;
+  @ApiProperty({ example: 3 }) completedCycles!: number;
+  @ApiProperty({ example: 7 }) durationCycles!: number;
+  @ApiProperty({ enum: ['PAID', 'UPCOMING'] }) payoutStatus!: 'PAID' | 'UPCOMING';
+  @ApiProperty({ nullable: true }) payoutPosition!: number | null;
+  @ApiProperty({ example: 1 }) totalLatePayments!: number;
+}
+
+export class MemberProgressResponseDto {
+  @ApiProperty() circleId!: string;
+  @ApiProperty() durationCycles!: number;
+  @ApiProperty({ type: [MemberProgressItemDto] }) members!: MemberProgressItemDto[];
+}
+
+// ── Tab 2a: Contributions In ────────────────────
+
+export class ContributionInItemDto {
+  @ApiProperty() contributionId!: string;
+  @ApiProperty() userId!: string;
+  @ApiProperty({ example: 'Jane Doe' }) memberName!: string;
+  @ApiProperty({ example: '500000' }) amount!: string;
+  @ApiProperty({ example: '10000' }) penaltyAmount!: string;
+  @ApiProperty() isLate!: boolean;
+  @ApiProperty() paidAt!: Date;
+}
+
+export class ContributionsInResponseDto {
+  @ApiProperty() circleId!: string;
+  @ApiProperty() cycleNumber!: number;
+  @ApiProperty({ type: [ContributionInItemDto] }) contributions!: ContributionInItemDto[];
+  @ApiProperty({ example: '1500000' }) totalCollected!: string;
+  @ApiProperty({ example: '30000' }) totalPenalties!: string;
+}
+
+// ── Tab 2b: Disbursement Schedule ──────────────
+
+export class DisbursementScheduleItemDto {
+  @ApiProperty() cycleNumber!: number;
+  @ApiProperty({ nullable: true }) recipientId!: string | null;
+  @ApiProperty({ nullable: true }) recipientName!: string | null;
+  @ApiProperty() payoutDate!: Date;
+  @ApiProperty() contributionDeadline!: Date;
+  @ApiProperty({ enum: ScheduleStatus }) scheduleStatus!: ScheduleStatus;
+  @ApiProperty({ enum: PayoutStatus, nullable: true }) payoutStatus!: PayoutStatus | null;
+  @ApiProperty({ example: '3500000', nullable: true }) amountPaidOut!: string | null;
+  @ApiProperty({ nullable: true }) processedAt!: Date | null;
+}
+
+export class DisbursementScheduleResponseDto {
+  @ApiProperty() circleId!: string;
+  @ApiProperty({ type: [DisbursementScheduleItemDto] }) schedules!: DisbursementScheduleItemDto[];
+}
+
+// ── Tab 3: Financial Health ─────────────────────
+
+export class CycleFinancialHealthDto {
+  @ApiProperty() cycleNumber!: number;
+  @ApiProperty() contributionDeadline!: Date;
+  @ApiProperty({ enum: ScheduleStatus }) scheduleStatus!: ScheduleStatus;
+  @ApiProperty({ example: '3500000', description: 'contributionAmount × filledSlots' }) expectedPot!: string;
+  @ApiProperty({ example: '2500000' }) collected!: string;
+  @ApiProperty({ example: '1000000' }) outstanding!: string;
+  @ApiProperty({ example: 7 }) expectedCount!: number;
+  @ApiProperty({ example: 5 }) collectedCount!: number;
+}
+
+export class FinancialHealthResponseDto {
+  @ApiProperty() circleId!: string;
+  @ApiProperty({ example: '500000' }) contributionAmount!: string;
+  @ApiProperty() filledSlots!: number;
+  @ApiProperty({ type: [CycleFinancialHealthDto] }) cycles!: CycleFinancialHealthDto[];
+}
+
 // ────────────────────────────────────────────────
 // FORMATTERS
 // ────────────────────────────────────────────────
@@ -288,7 +497,7 @@ export function formatCircleResponse(circle: any): RoscaCircleResponseDto {
     filledSlots: circle.filledSlots,
     maxSlots: circle.maxSlots,
     status: circle.status,
-    startDate: circle.startDate,
+    initialContributionDeadline: circle.initialContributionDeadline,
     collateralPercentage: circle.collateralPercentage,
 
     // Formatted Admin Object

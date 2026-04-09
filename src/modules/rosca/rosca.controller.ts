@@ -25,12 +25,25 @@ import {
   RoscaCircleResponseDto,
   RoscaMembershipResponseDto,
   AdminListCirclesQueryDto,
+  JoinRequestSearchQueryDto,
+  AdminDashboardResponseDto,
+  PendingCircleOverviewDto,
+  JoinRequesterDossierDto,
+  MyPendingJoinRequestDto,
   formatCircleResponse,
   formatMembershipResponse,
   RoscaCycleScheduleResponseDto,
   formatScheduleResponse,
   UpdatePayoutConfigDto,
   UpdateCircleDto,
+  MemberProgressResponseDto,
+  ContributionsInResponseDto,
+  DisbursementScheduleResponseDto,
+  FinancialHealthResponseDto,
+  RoundQueryDto,
+  CreateInviteDto,
+  JoinByInviteDto,
+  InviteResponseDto,
 } from './dto/rosca.dto';
 import { Roles } from '../../common/decorators/roles.decorator';
 
@@ -52,6 +65,43 @@ export class RoscaController {
       message: 'Circles retrieved successfully',
       data: circles.map(formatCircleResponse),
     };
+  }
+
+  @Get('my-join-requests')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Get all pending join requests submitted by the current user' })
+  @ApiResponse({ status: 200, type: [MyPendingJoinRequestDto] })
+  async getMyPendingJoinRequests(@CurrentUser('userId') userId: string) {
+    const memberships = await this.roscaService.getMyPendingJoinRequests(userId);
+    return {
+      success: true,
+      message: 'Pending join requests retrieved successfully',
+      data: memberships.map((m) => ({
+        membershipId: m.id,
+        circleId: m.circleId,
+        collateralReserved: m.collateralAmount.toString(),
+        requestedAt: m.joinedAt,
+        circle: {
+          id: m.circle.id,
+          name: m.circle.name,
+          contributionAmount: m.circle.contributionAmount.toString(),
+          frequency: m.circle.frequency,
+          maxSlots: m.circle.maxSlots,
+          filledSlots: m.circle.filledSlots,
+          status: m.circle.status,
+        },
+      })),
+    };
+  }
+
+  @Delete(':circleId/join-requests')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Cancel a pending join request and reclaim reserved collateral' })
+  async cancelJoinRequest(
+    @Param('circleId') circleId: string,
+    @CurrentUser('userId') userId: string,
+  ) {
+    return await this.roscaService.cancelJoinRequest(userId, circleId);
   }
 
   @Get('my-participations')
@@ -116,6 +166,19 @@ export class RoscaController {
       message: result.message,
     };
   }
+
+  @Post('join-by-invite')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Join a private ROSCA circle using an invite token' })
+  @ApiResponse({ status: 200, type: RoscaMembershipResponseDto })
+  async joinByInvite(@CurrentUser('userId') userId: string, @Body() dto: JoinByInviteDto) {
+    const membership = await this.roscaService.joinByInvite(userId, dto.token);
+    return {
+      success: true,
+      message: 'Joined circle successfully. Awaiting admin approval.',
+      data: formatMembershipResponse(membership),
+    };
+  }
 }
 
 // ────────────────────────────────────────────────
@@ -143,6 +206,43 @@ export class RoscaAdminController {
     };
   }
 
+  @Get('dashboard')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: '[Admin] Get dashboard summary: total groups, next deadline, pending requests',
+  })
+  @ApiResponse({ status: 200, type: AdminDashboardResponseDto })
+  async getDashboard(@CurrentUser('userId') adminId: string) {
+    const data = await this.roscaService.getAdminDashboard(adminId);
+    return { success: true, message: 'Dashboard retrieved successfully', data };
+  }
+
+  @Get('join-requests')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: '[Admin] List all circles with pending join requests, grouped by circle',
+  })
+  @ApiResponse({ status: 200, type: [PendingCircleOverviewDto] })
+  async getPendingJoinRequestsOverview(@CurrentUser('userId') adminId: string) {
+    const data = await this.roscaService.getPendingJoinRequestsOverview(adminId);
+    return { success: true, message: 'Pending join requests retrieved successfully', data };
+  }
+
+  @Get(':circleId/join-requests')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: '[Admin] Get requester dossiers for a specific circle, with optional name search',
+  })
+  @ApiResponse({ status: 200, type: [JoinRequesterDossierDto] })
+  async getCircleJoinRequests(
+    @Param('circleId') circleId: string,
+    @CurrentUser('userId') adminId: string,
+    @Query() query: JoinRequestSearchQueryDto,
+  ) {
+    const data = await this.roscaService.getCircleJoinRequests(circleId, adminId, query.search);
+    return { success: true, message: 'Join requests retrieved successfully', data };
+  }
+
   @Get('my-circles')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: '[Admin] Get all ROSCA circles created by the current admin' })
@@ -162,6 +262,104 @@ export class RoscaAdminController {
       message: 'Admin circles retrieved successfully',
       data: circles.map(formatCircleResponse),
     };
+  }
+
+  @Get(':circleId/members/progress')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: '[Admin] Get member lifecycle progress for a circle' })
+  @ApiResponse({ status: 200, type: MemberProgressResponseDto })
+  async getMemberProgress(
+    @Param('circleId') circleId: string,
+    @CurrentUser('userId') adminId: string,
+  ) {
+    const data = await this.roscaService.getMemberProgress(circleId, adminId);
+    return { success: true, message: 'Member progress retrieved successfully', data };
+  }
+
+  @Get(':circleId/contributions')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: '[Admin] Get contributions received for a specific round' })
+  @ApiResponse({ status: 200, type: ContributionsInResponseDto })
+  async getContributionsIn(
+    @Param('circleId') circleId: string,
+    @CurrentUser('userId') adminId: string,
+    @Query() query: RoundQueryDto,
+  ) {
+    const data = await this.roscaService.getContributionsIn(circleId, adminId, query.round);
+    return { success: true, message: 'Contributions retrieved successfully', data };
+  }
+
+  @Get(':circleId/disbursements')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: '[Admin] Get full disbursement schedule for a circle' })
+  @ApiResponse({ status: 200, type: DisbursementScheduleResponseDto })
+  async getDisbursementSchedule(
+    @Param('circleId') circleId: string,
+    @CurrentUser('userId') adminId: string,
+  ) {
+    const data = await this.roscaService.getDisbursementSchedule(circleId, adminId);
+    return { success: true, message: 'Disbursement schedule retrieved successfully', data };
+  }
+
+  @Get(':circleId/financial-health')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: '[Admin] Get per-cycle financial health overview' })
+  @ApiResponse({ status: 200, type: FinancialHealthResponseDto })
+  async getFinancialHealth(
+    @Param('circleId') circleId: string,
+    @CurrentUser('userId') adminId: string,
+  ) {
+    const data = await this.roscaService.getFinancialHealth(circleId, adminId);
+    return { success: true, message: 'Financial health retrieved successfully', data };
+  }
+
+  @Post(':circleId/notify-missing')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: '[Admin] Notify members who have not contributed in a given round' })
+  async notifyMissingMembers(
+    @Param('circleId') circleId: string,
+    @CurrentUser('userId') adminId: string,
+    @Query() query: RoundQueryDto,
+  ) {
+    const data = await this.roscaService.notifyMissingMembers(circleId, adminId, query.round);
+    return { success: true, message: `Notified ${data.notified} missing member(s) for cycle ${data.cycleNumber}`, data };
+  }
+
+  @Post(':circleId/invites')
+  @HttpCode(HttpStatus.CREATED)
+  @ApiOperation({ summary: '[Admin] Send an invite to a person to join a private circle' })
+  @ApiResponse({ status: 201, type: InviteResponseDto })
+  async createInvite(
+    @Param('circleId') circleId: string,
+    @CurrentUser('userId') adminId: string,
+    @Body() dto: CreateInviteDto,
+  ) {
+    const invite = await this.roscaService.createInvite(circleId, adminId, dto.email);
+    return { success: true, message: 'Invite created successfully', data: invite };
+  }
+
+  @Get(':circleId/invites')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: '[Admin] List all invites for a private circle' })
+  @ApiResponse({ status: 200, type: [InviteResponseDto] })
+  async listInvites(
+    @Param('circleId') circleId: string,
+    @CurrentUser('userId') adminId: string,
+  ) {
+    const data = await this.roscaService.listInvites(circleId, adminId);
+    return { success: true, message: 'Invites retrieved successfully', data };
+  }
+
+  @Delete(':circleId/invites/:inviteId')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: '[Admin] Revoke an unused invite' })
+  async revokeInvite(
+    @Param('circleId') circleId: string,
+    @Param('inviteId') inviteId: string,
+    @CurrentUser('userId') adminId: string,
+  ) {
+    const result = await this.roscaService.revokeInvite(circleId, inviteId, adminId);
+    return { success: true, message: result.message };
   }
 
   @Get(':circleId')
@@ -185,7 +383,10 @@ export class RoscaAdminController {
   @ApiOperation({ summary: '[Admin] Verify and activate a ROSCA circle' })
   @ApiResponse({ status: 200, type: RoscaCircleResponseDto })
   async activateCircle(@Param('circleId') circleId: string, @Body() dto: ActivateCircleDto) {
-    const circle = await this.roscaService.activateCircle(circleId, new Date(dto.startDate));
+    const circle = await this.roscaService.activateCircle(
+      circleId,
+      new Date(dto.initialContributionDeadline),
+    );
     return {
       success: true,
       message: 'Circle verified and activated. Schedules generated.',

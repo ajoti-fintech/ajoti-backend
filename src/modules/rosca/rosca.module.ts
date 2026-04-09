@@ -11,9 +11,10 @@ import { LedgerModule } from '../ledger/ledger.module'; // import if LedgerServi
 import { PrismaModule } from '../../prisma';
 import { AuthModule } from '../auth/auth.module';
 import { PayoutModule } from '../payout/payout.module';
+import { NotificationModule } from '../notification/notification.module';
 
 @Module({
-  imports: [LedgerModule, PrismaModule, AuthModule, PayoutModule], // if LedgerService is exported from there
+  imports: [LedgerModule, PrismaModule, AuthModule, PayoutModule, NotificationModule],
   controllers: [RoscaController, RoscaAdminController, RoscaSuperAdminController],
   providers: [RoscaService, PrismaService],
   exports: [RoscaService], // if other modules need to use it
