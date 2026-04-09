@@ -349,7 +349,11 @@ export class RoscaService {
         memberships: {
           include: {
             user: {
-              select: { firstName: true, lastName: true },
+              select: {
+                firstName: true,
+                lastName: true,
+                userTrustStats: { select: { trustScore: true } },
+              },
             },
           },
           orderBy: { payoutPosition: 'asc' },
@@ -396,13 +400,17 @@ export class RoscaService {
       filledSlots: circle.filledSlots,
       availableSlots: circle.maxSlots - circle.filledSlots,
       admin: circle.admin,
-      members: circle.memberships.map((m) => ({
-        userId: m.userId,
-        name: `${m.user.firstName} ${m.user.lastName}`,
-        status: m.status,
-        position: m.payoutPosition,
-        joinedAt: m.joinedAt,
-      })),
+      members: circle.memberships.map((m) => {
+        const raw = m.user.userTrustStats?.trustScore ?? 50;
+        return {
+          userId: m.userId,
+          name: `${m.user.firstName} ${m.user.lastName}`,
+          status: m.status,
+          position: m.payoutPosition,
+          joinedAt: m.joinedAt,
+          trustScore: Math.round(300 + raw * 5.5),
+        };
+      }),
       isRequestingUserAdmin: circle.adminId === userId,
       userMembershipStatus: userMembership?.status || null,
       userPayoutPosition: userMembership?.payoutPosition || null,
