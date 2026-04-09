@@ -2,6 +2,7 @@ import { Test, TestingModule } from '@nestjs/testing';
 import { RoscaService } from './rosca.service';
 import { LedgerService } from '../ledger/ledger.service';
 import { PrismaService } from '../../prisma/prisma.service';
+import { NotificationService } from '../notification/notification.service';
 import {
   CircleStatus,
   MembershipStatus,
@@ -36,6 +37,7 @@ describe('RoscaService', () => {
         RoscaService,
         { provide: LedgerService, useValue: mockLedgerService },
         { provide: PrismaService, useValue: mockPrisma },
+        { provide: NotificationService, useValue: { createInAppNotification: jest.fn().mockResolvedValue(undefined) } },
       ],
     }).compile();
 

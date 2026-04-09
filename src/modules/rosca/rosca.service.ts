@@ -18,6 +18,7 @@ import {
   MembershipStatus,
   ScheduleStatus,
   PayoutLogic,
+  PayoutStatus,
 } from '@prisma/client';
 import {
   AdminListCirclesQueryDto,
@@ -26,12 +27,14 @@ import {
   UpdateCircleDto,
 } from './dto/rosca.dto';
 import { PayoutSorter } from './payout-sorter.util';
+import { NotificationService } from '../notification/notification.service';
 
 @Injectable()
 export class RoscaService {
   constructor(
     private prisma: PrismaService,
     private ledger: LedgerService,
+    private notifications: NotificationService,
   ) {}
 
   // =========================================================================
@@ -930,6 +933,199 @@ export class RoscaService {
       },
       { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
     );
+  }
+
+  // =========================================================================
+  // ADMIN OVERSIGHT — Member Progress & Payment Visibility
+  // =========================================================================
+
+  private async assertAdminOwnsCircle(circleId: string, adminId: string) {
+    const circle = await this.prisma.roscaCircle.findUnique({
+      where: { id: circleId },
+      select: {
+        adminId: true,
+        currentCycle: true,
+        durationCycles: true,
+        contributionAmount: true,
+        filledSlots: true,
+      },
+    });
+    if (!circle) throw new NotFoundException('Circle not found');
+    if (circle.adminId !== adminId)
+      throw new ForbiddenException('You do not have permission to manage this circle');
+    return circle;
+  }
+
+  async getMemberProgress(circleId: string, adminId: string) {
+    const circle = await this.assertAdminOwnsCircle(circleId, adminId);
+
+    const [memberships, completedPayouts] = await Promise.all([
+      this.prisma.roscaMembership.findMany({
+        where: { circleId, status: { in: [MembershipStatus.ACTIVE, MembershipStatus.COMPLETED] } },
+        include: { user: { select: { firstName: true, lastName: true } } },
+        orderBy: { payoutPosition: 'asc' },
+      }),
+      this.prisma.roscaPayout.findMany({
+        where: { circleId, status: PayoutStatus.COMPLETED },
+        select: { recipientId: true },
+      }),
+    ]);
+
+    const paidRecipientIds = new Set(completedPayouts.map((p) => p.recipientId));
+
+    return {
+      circleId,
+      durationCycles: circle.durationCycles,
+      members: memberships.map((m) => ({
+        userId: m.userId,
+        name: `${m.user.firstName} ${m.user.lastName}`,
+        completedCycles: m.completedCycles,
+        durationCycles: circle.durationCycles,
+        payoutStatus: paidRecipientIds.has(m.userId) ? 'PAID' : 'UPCOMING',
+        payoutPosition: m.payoutPosition,
+        totalLatePayments: m.totalLatePayments,
+      })),
+    };
+  }
+
+  async getContributionsIn(circleId: string, adminId: string, round?: number) {
+    const circle = await this.assertAdminOwnsCircle(circleId, adminId);
+    const cycleNumber = round ?? circle.currentCycle;
+
+    const contributions = await this.prisma.roscaContribution.findMany({
+      where: { circleId, cycleNumber },
+      include: { user: { select: { id: true, firstName: true, lastName: true } } },
+      orderBy: { paidAt: 'asc' },
+    });
+
+    const totalCollected = contributions.reduce((sum, c) => sum + c.amount, 0n);
+    const totalPenalties = contributions.reduce((sum, c) => sum + c.penaltyAmount, 0n);
+
+    return {
+      circleId,
+      cycleNumber,
+      contributions: contributions.map((c) => ({
+        contributionId: c.id,
+        userId: c.userId,
+        memberName: `${c.user.firstName} ${c.user.lastName}`,
+        amount: c.amount.toString(),
+        penaltyAmount: c.penaltyAmount.toString(),
+        isLate: c.penaltyAmount > 0n,
+        paidAt: c.paidAt,
+      })),
+      totalCollected: totalCollected.toString(),
+      totalPenalties: totalPenalties.toString(),
+    };
+  }
+
+  async getDisbursementSchedule(circleId: string, adminId: string) {
+    await this.assertAdminOwnsCircle(circleId, adminId);
+
+    const schedules = await this.prisma.roscaCycleSchedule.findMany({
+      where: { circleId, obsoletedAt: null },
+      include: {
+        recipient: { select: { id: true, firstName: true, lastName: true } },
+        payout: { select: { status: true, amount: true, processedAt: true } },
+      },
+      orderBy: { cycleNumber: 'asc' },
+    });
+
+    return {
+      circleId,
+      schedules: schedules.map((s) => ({
+        cycleNumber: s.cycleNumber,
+        recipientId: s.recipientId,
+        recipientName: s.recipient ? `${s.recipient.firstName} ${s.recipient.lastName}` : null,
+        payoutDate: s.payoutDate,
+        contributionDeadline: s.contributionDeadline,
+        scheduleStatus: s.status,
+        payoutStatus: s.payout?.status ?? null,
+        amountPaidOut: s.payout?.amount?.toString() ?? null,
+        processedAt: s.payout?.processedAt ?? null,
+      })),
+    };
+  }
+
+  async getFinancialHealth(circleId: string, adminId: string) {
+    const circle = await this.assertAdminOwnsCircle(circleId, adminId);
+
+    const [schedules, contributionTotals] = await Promise.all([
+      this.prisma.roscaCycleSchedule.findMany({
+        where: { circleId, obsoletedAt: null },
+        select: { cycleNumber: true, contributionDeadline: true, status: true },
+        orderBy: { cycleNumber: 'asc' },
+      }),
+      this.prisma.roscaContribution.groupBy({
+        by: ['cycleNumber'],
+        where: { circleId },
+        _sum: { amount: true },
+        _count: { id: true },
+      }),
+    ]);
+
+    const totalsMap = new Map(
+      contributionTotals.map((t) => [
+        t.cycleNumber,
+        { collected: t._sum.amount ?? 0n, count: t._count.id },
+      ]),
+    );
+
+    const expectedPot = circle.contributionAmount * BigInt(circle.filledSlots);
+
+    return {
+      circleId,
+      contributionAmount: circle.contributionAmount.toString(),
+      filledSlots: circle.filledSlots,
+      cycles: schedules.map((s) => {
+        const { collected, count } = totalsMap.get(s.cycleNumber) ?? { collected: 0n, count: 0 };
+        const outstanding = expectedPot > collected ? expectedPot - collected : 0n;
+        return {
+          cycleNumber: s.cycleNumber,
+          contributionDeadline: s.contributionDeadline,
+          scheduleStatus: s.status,
+          expectedPot: expectedPot.toString(),
+          collected: collected.toString(),
+          outstanding: outstanding.toString(),
+          expectedCount: circle.filledSlots,
+          collectedCount: count,
+        };
+      }),
+    };
+  }
+
+  async notifyMissingMembers(circleId: string, adminId: string, round?: number) {
+    const circle = await this.assertAdminOwnsCircle(circleId, adminId);
+    const cycleNumber = round ?? circle.currentCycle;
+
+    const [members, contributed] = await Promise.all([
+      this.prisma.roscaMembership.findMany({
+        where: { circleId, status: MembershipStatus.ACTIVE },
+        select: { userId: true },
+      }),
+      this.prisma.roscaContribution.findMany({
+        where: { circleId, cycleNumber },
+        select: { userId: true },
+      }),
+    ]);
+
+    const contributedIds = new Set(contributed.map((c) => c.userId));
+    const missingUserIds = members.map((m) => m.userId).filter((id) => !contributedIds.has(id));
+
+    if (missingUserIds.length === 0) {
+      return { notified: 0, cycleNumber, message: 'All members have contributed for this cycle' };
+    }
+
+    await Promise.allSettled(
+      missingUserIds.map((userId) =>
+        this.notifications.createInAppNotification(
+          userId,
+          'Contribution Reminder',
+          `You have not yet contributed for cycle ${cycleNumber}. Please contribute before the deadline to avoid a late penalty.`,
+        ),
+      ),
+    );
+
+    return { notified: missingUserIds.length, cycleNumber };
   }
 
   // =========================================================================

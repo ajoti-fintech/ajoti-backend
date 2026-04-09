@@ -24,6 +24,7 @@ import {
   CircleVisibility, // Added this since it was used in your DTO
 } from '@prisma/client';
 import { Type } from 'class-transformer';
+import { PayoutStatus } from '@prisma/client';
 
 // ────────────────────────────────────────────────
 // Custom validator
@@ -365,6 +366,94 @@ export class JoinRequesterDossierDto {
 
   @ApiProperty({ example: 4, description: 'Number of ROSCA cycles completed across all groups' })
   completedCycles!: number;
+}
+
+// ── Round query ────────────────────────────────
+
+export class RoundQueryDto {
+  @ApiPropertyOptional({ example: 2, description: 'Cycle number to filter by. Defaults to currentCycle.' })
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  round?: number;
+}
+
+// ── Tab 1: Member Progress ──────────────────────
+
+export class MemberProgressItemDto {
+  @ApiProperty() userId!: string;
+  @ApiProperty({ example: 'Jane Doe' }) name!: string;
+  @ApiProperty({ example: 3 }) completedCycles!: number;
+  @ApiProperty({ example: 7 }) durationCycles!: number;
+  @ApiProperty({ enum: ['PAID', 'UPCOMING'] }) payoutStatus!: 'PAID' | 'UPCOMING';
+  @ApiProperty({ nullable: true }) payoutPosition!: number | null;
+  @ApiProperty({ example: 1 }) totalLatePayments!: number;
+}
+
+export class MemberProgressResponseDto {
+  @ApiProperty() circleId!: string;
+  @ApiProperty() durationCycles!: number;
+  @ApiProperty({ type: [MemberProgressItemDto] }) members!: MemberProgressItemDto[];
+}
+
+// ── Tab 2a: Contributions In ────────────────────
+
+export class ContributionInItemDto {
+  @ApiProperty() contributionId!: string;
+  @ApiProperty() userId!: string;
+  @ApiProperty({ example: 'Jane Doe' }) memberName!: string;
+  @ApiProperty({ example: '500000' }) amount!: string;
+  @ApiProperty({ example: '10000' }) penaltyAmount!: string;
+  @ApiProperty() isLate!: boolean;
+  @ApiProperty() paidAt!: Date;
+}
+
+export class ContributionsInResponseDto {
+  @ApiProperty() circleId!: string;
+  @ApiProperty() cycleNumber!: number;
+  @ApiProperty({ type: [ContributionInItemDto] }) contributions!: ContributionInItemDto[];
+  @ApiProperty({ example: '1500000' }) totalCollected!: string;
+  @ApiProperty({ example: '30000' }) totalPenalties!: string;
+}
+
+// ── Tab 2b: Disbursement Schedule ──────────────
+
+export class DisbursementScheduleItemDto {
+  @ApiProperty() cycleNumber!: number;
+  @ApiProperty({ nullable: true }) recipientId!: string | null;
+  @ApiProperty({ nullable: true }) recipientName!: string | null;
+  @ApiProperty() payoutDate!: Date;
+  @ApiProperty() contributionDeadline!: Date;
+  @ApiProperty({ enum: ScheduleStatus }) scheduleStatus!: ScheduleStatus;
+  @ApiProperty({ enum: PayoutStatus, nullable: true }) payoutStatus!: PayoutStatus | null;
+  @ApiProperty({ example: '3500000', nullable: true }) amountPaidOut!: string | null;
+  @ApiProperty({ nullable: true }) processedAt!: Date | null;
+}
+
+export class DisbursementScheduleResponseDto {
+  @ApiProperty() circleId!: string;
+  @ApiProperty({ type: [DisbursementScheduleItemDto] }) schedules!: DisbursementScheduleItemDto[];
+}
+
+// ── Tab 3: Financial Health ─────────────────────
+
+export class CycleFinancialHealthDto {
+  @ApiProperty() cycleNumber!: number;
+  @ApiProperty() contributionDeadline!: Date;
+  @ApiProperty({ enum: ScheduleStatus }) scheduleStatus!: ScheduleStatus;
+  @ApiProperty({ example: '3500000', description: 'contributionAmount × filledSlots' }) expectedPot!: string;
+  @ApiProperty({ example: '2500000' }) collected!: string;
+  @ApiProperty({ example: '1000000' }) outstanding!: string;
+  @ApiProperty({ example: 7 }) expectedCount!: number;
+  @ApiProperty({ example: 5 }) collectedCount!: number;
+}
+
+export class FinancialHealthResponseDto {
+  @ApiProperty() circleId!: string;
+  @ApiProperty({ example: '500000' }) contributionAmount!: string;
+  @ApiProperty() filledSlots!: number;
+  @ApiProperty({ type: [CycleFinancialHealthDto] }) cycles!: CycleFinancialHealthDto[];
 }
 
 // ────────────────────────────────────────────────
