@@ -6,21 +6,14 @@ import {
   IsNumber,
   Min,
   Max,
-  IsEnum,
   IsOptional,
   IsObject,
   IsIn,
 } from 'class-validator';
 
-export enum PaymentMethod {
-  CARD = 'CARD',
-  BANK_TRANSFER = 'BANK_TRANSFER',
-  USSD = 'USSD',
-}
-
 export class InitializeFundingDto {
   @ApiProperty({
-    example: 50000,
+    example: 500000,
     description: 'Amount in kobo (smallest unit, e.g. 50000 = ₦500)',
     minimum: 100,
     maximum: 1000000000,
@@ -38,15 +31,6 @@ export class InitializeFundingDto {
   @IsString()
   @IsNotEmpty()
   redirectUrl: string;
-
-  @ApiProperty({
-    enum: PaymentMethod,
-    example: PaymentMethod.CARD,
-    description: 'Payment method',
-  })
-  @IsEnum(PaymentMethod)
-  @IsNotEmpty()
-  paymentMethod: PaymentMethod;
 
   @ApiPropertyOptional({
     example: 'NGN',
@@ -78,7 +62,12 @@ export class FundingResponseDto {
   @ApiProperty({
     type: 'object',
     properties: {
-      reference: { type: 'string', example: 'AJT-FUND-uuid-here' },
+      reference: {
+        type: 'string',
+        example: 'AJT-FUND-uuid-here',
+        description:
+          'Save this internal funding reference. The frontend must use it for GET /api/wallet/funding/verify/:reference after Flutterwave redirects back.',
+      },
       authorizationUrl: { type: 'string', example: 'https://checkout.flutterwave.com/...' },
       provider: { type: 'string', example: 'FLUTTERWAVE' },
     },

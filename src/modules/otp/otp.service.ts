@@ -2,15 +2,12 @@ import { PrismaService } from '@/prisma';
 import { BadRequestException, Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { OTPPurpose } from '@prisma/client';
-import { generateOtpCode, hashValue, verifyHash } from '@/common';
+import { generateOtpCode, hashValue, normalizeEmail, verifyHash } from '@/common';
 import { MailErrorMapper } from '@/common/error/mail-error';
-import { MailProducer } from '../mail/mail.producer';
+import { MailQueue } from '../mail/mail.queue';
 
 type SendOtpOptions = {
   subject: string;
-  /**
-   * Build the email html. We pass otp + expiryMinutes so callers can reuse it.
-   */
   buildHtml: (args: { otp: string; expiryMinutes: number }) => string;
 };
 
@@ -21,7 +18,7 @@ export class OtpService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly config: ConfigService,
-    private readonly mailQueue: MailProducer,
+    private readonly mailQueue: MailQueue,
     private readonly mailErrorMapper: MailErrorMapper,
   ) {}
 
@@ -34,12 +31,40 @@ export class OtpService {
     return Number(this.config.get<string>('OTP_EXPIRES_MINUTES') || '10');
   }
 
+  private async findActiveUserByEmail(email: string) {
+    return this.prisma.user.findFirst({
+      where: {
+        email: {
+          equals: normalizeEmail(email),
+          mode: 'insensitive',
+        },
+      },
+    });
+  }
+
   async sendOtp(email: string, purpose: OTPPurpose, options: SendOtpOptions) {
-    const user = await this.prisma.user.findUnique({ where: { email } });
+    const normalizedEmail = normalizeEmail(email);
+    const user = await this.findActiveUserByEmail(normalizedEmail);
+    if (!user) throw new BadRequestException('User not found');
+
+    return this.sendOtpToUser(user.id, normalizedEmail, purpose, options);
+  }
+
+  async sendOtpToUser(
+    userId: string,
+    recipientEmail: string,
+    purpose: OTPPurpose,
+    options: SendOtpOptions,
+  ) {
+    const user = await this.prisma.user.findUnique({
+      where: { id: userId },
+      select: { id: true },
+    });
+
     if (!user) throw new BadRequestException('User not found');
 
     await this.prisma.otpCode.updateMany({
-      where: { userId: user.id, purpose, usedAt: null },
+      where: { userId, purpose, usedAt: null },
       data: { usedAt: new Date() },
     });
 
@@ -48,7 +73,7 @@ export class OtpService {
 
     await this.prisma.otpCode.create({
       data: {
-        userId: user.id,
+        userId,
         purpose,
         codeHash,
         expiresAt: this.otpExpiresAt(),
@@ -59,7 +84,7 @@ export class OtpService {
     const html = options.buildHtml({ otp, expiryMinutes });
 
     try {
-      await this.mailQueue.enqueue(email, options.subject, html);
+      await this.mailQueue.enqueue(normalizeEmail(recipientEmail), options.subject, html);
     } catch (err: any) {
       this.logger.error('OTP email failed', err?.stack || err);
       this.mailErrorMapper.map(err);
@@ -69,12 +94,20 @@ export class OtpService {
   }
 
   async consumeOtp(email: string, purpose: OTPPurpose, otp: string) {
-    const user = await this.prisma.user.findUnique({ where: { email } });
+    const normalizedEmail = normalizeEmail(email);
+    const user = await this.findActiveUserByEmail(normalizedEmail);
+    if (!user) throw new BadRequestException('User not found');
+
+    return this.consumeOtpByUserId(user.id, purpose, otp);
+  }
+
+  async consumeOtpByUserId(userId: string, purpose: OTPPurpose, otp: string) {
+    const user = await this.prisma.user.findUnique({ where: { id: userId } });
     if (!user) throw new BadRequestException('User not found');
 
     const record = await this.prisma.otpCode.findFirst({
       where: {
-        userId: user.id,
+        userId,
         purpose,
         usedAt: null,
         expiresAt: { gt: new Date() },

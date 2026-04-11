@@ -1,4 +1,4 @@
-// src/modules/transactions/dto/flutterwave-webhook.dto.ts
+// src/modules/webhooks/dto/flutterwave-webhook.dto.ts
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import {
   IsString,
@@ -81,20 +81,46 @@ export class FlutterwaveWebhookDto {
   data: WebhookDataDto;
 }
 
+/**
+ * Shape of the data object inside a charge.completed webhook.
+ *
+ * payment_type values FLW sends for NGN:
+ *   'card'          — debit/credit card via hosted checkout or inline
+ *   'bank_transfer' — bank transfer via hosted checkout OR virtual account credit
+ *   'account'       — direct bank debit
+ *   'ussd'          — USSD payment
+ *
+ * For virtual account credits, payment_type is always 'bank_transfer'
+ * and tx_ref is the static AJOTI-VA-{userId} reference.
+ * Use flw_ref (unique per payment) as the ledger idempotency key for VA credits.
+ */
 export interface FlwChargeData {
-  id: number;           // FLW transaction ID
-  tx_ref: string;       // Our internal reference (e.g. AJT-FUND-{uuid})
-  flw_ref: string;
-  amount: number;       // In Naira
+  id: number;             // FLW numeric transaction ID — use for verifyTransaction()
+  tx_ref: string;         // Our reference (AJT-FUND-{uuid} or AJOTI-VA-{userId})
+  flw_ref: string;        // FLW's own reference — unique per payment, use for VA idempotency
+  amount: number;         // In Naira (decimal) — multiply by 100 to get kobo
   currency: string;
   charged_amount: number;
   status: 'successful' | 'failed';
+  /**
+   * How the customer paid.
+   * Critical for routing VA credits vs hosted checkout credits in the webhook handler.
+   */
+  payment_type: string;
   customer: {
     id: number;
     name: string;
     email: string;
     phone_number: string | null;
   };
+}
+
+export interface FlwWebhookMetaData {
+  originatoraccountnumber?: string;
+  originatorname?: string;
+  bankname?: string;
+  originatoramount?: string | number;
+  [key: string]: unknown;
 }
 
 export interface FlwTransferData {
@@ -105,16 +131,47 @@ export interface FlwTransferData {
   fullname: string;
   created_at: string;
   currency: string;
-  amount: number;       // In Naira
+  amount: number;         // In Naira
   fee: number;
   status: 'SUCCESSFUL' | 'FAILED' | 'NEW' | 'PENDING';
-  reference: string;   // Our internal reference (e.g. WITHDRAWAL-{uuid})
+  reference: string;      // Our internal reference (WITHDRAWAL-{uuid})
   narration: string;
   complete_message: string;
 }
 
 export class FlwWebhookPayload {
+  @ApiProperty({
+    example: 'charge.completed',
+    description: 'Flutterwave event type',
+  })
+  @IsString()
+  @IsNotEmpty()
   event: string;
-  'event.type': string;
+
+  @ApiPropertyOptional({
+    name: 'event.type',
+    example: 'CARD_TRANSACTION',
+    description: 'Flutterwave event subtype',
+  })
+  @IsOptional()
+  @IsString()
+  'event.type'?: string;
+
+  @ApiProperty({
+    type: 'object',
+    additionalProperties: true,
+    description: 'Provider event payload body',
+  })
+  @IsObject()
   data: FlwChargeData | FlwTransferData;
+
+  @ApiPropertyOptional({
+    type: 'object',
+    additionalProperties: true,
+    description:
+      'Optional top-level Flutterwave metadata (e.g. originator account details for bank transfers)',
+  })
+  @IsOptional()
+  @IsObject()
+  meta_data?: FlwWebhookMetaData;
 }

@@ -1,0 +1,4 @@
+disconnect vp and run it 
+the command to push to neondb is: npx prisma migrate deploy
+
+the command to create migrations after edits on the schema.prisma file: npx prisma migrate dev --name thisisaplaceholdername

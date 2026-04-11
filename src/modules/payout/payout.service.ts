@@ -1,5 +1,12 @@
-import { Injectable, BadRequestException, NotFoundException } from '@nestjs/common';
+// src/modules/payout/payout.service.ts
+import { Injectable, BadRequestException, NotFoundException, Logger } from '@nestjs/common';
 import * as crypto from 'crypto';
+import { InjectQueue } from '@nestjs/bullmq';
+import { Queue } from 'bullmq';
+import { AUTH_EVENTS_QUEUE, AuthJobName } from '../auth/auth.events';
+import { LoanService } from '../loans/loans.service';
+import { TrustService } from '../trust/trust.service';
+import { CreditService } from '../credit/credit.service';
 import {
   Prisma,
   EntryType,
@@ -17,21 +24,41 @@ import { LedgerService } from '../ledger/ledger.service';
 import { PayoutResult } from './interfaces/payout.interface';
 import { ReversePayoutDto } from './dto/payout.dto';
 
+/**
+ * BUCKET TYPE RULES (from LedgerService):
+ *
+ *   CREDIT / DEBIT  → must use BucketType.MAIN (or omit bucketType)
+ *   RESERVE / RELEASE → must use a non-MAIN bucket (e.g. BucketType.ROSCA)
+ *
+ * Payouts move money between wallets via DEBIT (pool) + CREDIT (recipient).
+ * Both of those are MAIN bucket operations — the ROSCA reservation was already
+ * released by each member's RELEASE entry when they contributed.
+ */
 @Injectable()
 export class PayoutService {
+  private readonly logger = new Logger(PayoutService.name);
+
   constructor(
     private prisma: PrismaService,
     private ledger: LedgerService,
+    private loanService: LoanService,
+    private trustService: TrustService,
+    private creditService: CreditService,
+    @InjectQueue(AUTH_EVENTS_QUEUE) private readonly authEventsQueue: Queue,
   ) {}
 
   /**
-   * PROCESS PAYOUT — Rule R1, R5, R7, R10
-   * Moves total pot from Platform Pool to Winner
+   * PROCESS PAYOUT — Rules R1, R5, R7, R10
+   * Moves total pot from Platform Pool wallet to winner's wallet.
+   *
+   * Ledger entries written:
+   *   1. DEBIT  (MAIN) on system pool wallet  — pot leaves the pool
+   *   2. CREDIT (MAIN) on recipient wallet    — pot arrives for winner
    */
   async processPayout(circleId: string, cycleNumber: number): Promise<PayoutResult> {
-    return this.prisma.$transaction(
+    const result = await this.prisma.$transaction<PayoutResult>(
       async (tx) => {
-        // 1. Fetch & validate circle + schedule
+        // ── 1. Fetch & validate circle + schedule ──────────────────────────
         const circle = await tx.roscaCircle.findUnique({
           where: { id: circleId },
           include: {
@@ -54,7 +81,7 @@ export class PayoutService {
           throw new BadRequestException('No recipient assigned to this cycle');
         }
 
-        // 2. Prevent duplicate payout
+        // ── 2. Prevent duplicate payout ────────────────────────────────────
         const existing = await tx.roscaPayout.findFirst({
           where: {
             scheduleId: schedule.id,
@@ -63,11 +90,12 @@ export class PayoutService {
         });
 
         if (existing) {
-          throw new BadRequestException('Payout already processed or in progress for this cycle');
+          throw new BadRequestException(
+            'Payout already processed or in progress for this cycle',
+          );
         }
 
-        // 3. Calculate pot (base contributions + penalties)
-        // If you want to exclude penalties from pot, remove + c.penaltyAmount
+        // ── 3. Calculate pot ───────────────────────────────────────────────
         const contributions = await tx.roscaContribution.findMany({
           where: { circleId, cycleNumber },
         });
@@ -81,29 +109,39 @@ export class PayoutService {
           throw new BadRequestException('No funds available for payout');
         }
 
-        // 4. System & recipient wallets
+        // ── 4. Resolve wallets ─────────────────────────────────────────────
         const systemWallet = await tx.systemWallet.findUnique({
           where: { type: SystemWalletType.PLATFORM_POOL },
         });
-
         if (!systemWallet) throw new Error('Platform pool wallet not configured');
 
         const winnerWallet = await tx.wallet.findUnique({
           where: { userId: recipientId },
         });
-
         if (!winnerWallet) throw new NotFoundException('Recipient wallet not found');
 
         const payoutId = crypto.randomUUID();
         const internalRef = `PAYOUT-${crypto.randomUUID()}`;
 
-        // 5. Ledger movements
+        // ── 4b. Loan deduction — net out any active loan for this recipient ─
+        const { netPayout, loanRepaid } = await this.loanService.processLoanRepaymentInTx(
+          recipientId,
+          circleId,
+          totalPot,
+          tx,
+        );
+
+        // ── 5. Ledger movements ────────────────────────────────────────────
+        //
+        // DEBIT the pool wallet — BucketType.MAIN (required by LedgerService)
+        // The pool holds money as plain MAIN balance; there is no ROSCA bucket on it.
+        //
         const poolDebitEntry = await this.ledger.writeEntry(
           {
             walletId: systemWallet.walletId,
             entryType: EntryType.DEBIT,
             movementType: MovementType.TRANSFER,
-            bucketType: BucketType.ROSCA,
+            bucketType: BucketType.MAIN, // ← MUST be MAIN for DEBIT
             amount: totalPot,
             reference: `POOL-DEBIT-${crypto.randomUUID()}`,
             sourceType: LedgerSourceType.ROSCA_CIRCLE,
@@ -113,29 +151,40 @@ export class PayoutService {
           tx,
         );
 
+        // CREDIT the recipient wallet — BucketType.MAIN (required by LedgerService)
+        // Winner receives netPayout (totalPot minus any loan deduction + company fee).
+        //
         const recipientCreditEntry = await this.ledger.writeEntry(
           {
             walletId: winnerWallet.id,
             entryType: EntryType.CREDIT,
             movementType: MovementType.TRANSFER,
-            bucketType: BucketType.ROSCA,
-            amount: totalPot,
+            bucketType: BucketType.MAIN, // ← MUST be MAIN for CREDIT
+            amount: netPayout,
             reference: internalRef,
             sourceType: LedgerSourceType.ROSCA_CIRCLE,
             sourceId: payoutId,
-            metadata: { circleId, cycleNumber },
+            metadata: {
+              circleId,
+              cycleNumber,
+              ...(loanRepaid && {
+                loanRepaid: true,
+                grossPayout: totalPot.toString(),
+                netPayout: netPayout.toString(),
+              }),
+            },
           },
           tx,
         );
 
-        // 6. Create payout record
+        // ── 6. Create payout record ────────────────────────────────────────
         const payout = await tx.roscaPayout.create({
           data: {
             id: payoutId,
             circleId,
             scheduleId: schedule.id,
             recipientId,
-            amount: totalPot,
+            amount: netPayout, // net amount the recipient actually received
             status: PayoutStatus.COMPLETED,
             internalReference: internalRef,
             poolDebitId: poolDebitEntry.id,
@@ -144,13 +193,13 @@ export class PayoutService {
           },
         });
 
-        // 7. Mark schedule as completed
+        // ── 7. Mark schedule completed ─────────────────────────────────────
         await tx.roscaCycleSchedule.update({
           where: { id: schedule.id },
           data: { status: ScheduleStatus.COMPLETED },
         });
 
-        // 8. Finalize if last cycle
+        // ── 8. Finalize circle on last cycle ───────────────────────────────
         const isLastCycle = cycleNumber === circle.durationCycles;
         if (isLastCycle) {
           await this.finalizeCircleAndReleaseCollateral(tx, circleId);
@@ -166,10 +215,24 @@ export class PayoutService {
       },
       { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
     );
+
+    // Notify the winner AFTER the DB transaction commits.
+    await this.enqueueTransactionEvent(result.recipientId, BigInt(result.amount), result.payoutId);
+
+    // Record missed contributions for members who didn't contribute this cycle.
+    // Done after commit so a trust score failure never rolls back the payout.
+    await this.recordMissedContributions(circleId, cycleNumber).catch((err) =>
+      this.logger.error(`Failed to record missed contributions for cycle ${cycleNumber}`, err),
+    );
+
+    return result;
   }
 
   /**
-   * REVERSAL — Compensating entries when external disbursement fails
+   * REVERSAL — Compensating entries when external disbursement fails.
+   *
+   * Undoes the CREDIT on the recipient and restores the DEBIT on the pool.
+   * Both reversal entries use BucketType.MAIN — same rule as the originals.
    */
   async reversePayout(dto: ReversePayoutDto): Promise<void> {
     await this.prisma.$transaction(async (tx) => {
@@ -186,25 +249,23 @@ export class PayoutService {
       const systemWallet = await tx.systemWallet.findUnique({
         where: { type: SystemWalletType.PLATFORM_POOL },
       });
-
       if (!systemWallet) throw new Error('Platform pool wallet not found');
 
       const recipientWallet = await tx.wallet.findUnique({
         where: { userId: dto.recipientId },
       });
-
       if (!recipientWallet) throw new NotFoundException('Recipient wallet not found');
 
       const amountBigInt = BigInt(dto.amount);
       const reversalId = crypto.randomUUID();
 
-      // Undo credit → debit recipient
+      // Undo credit → DEBIT recipient (BucketType.MAIN — recipient's spendable balance)
       const reversalDebit = await this.ledger.writeEntry(
         {
           walletId: recipientWallet.id,
           entryType: EntryType.DEBIT,
           movementType: MovementType.TRANSFER,
-          bucketType: BucketType.ROSCA,
+          bucketType: BucketType.MAIN, // ← MUST be MAIN for DEBIT
           amount: amountBigInt,
           reference: `REV-DEBIT-${crypto.randomUUID()}`,
           sourceType: LedgerSourceType.REVERSAL,
@@ -218,13 +279,13 @@ export class PayoutService {
         tx,
       );
 
-      // Undo debit → credit pool
+      // Undo debit → CREDIT pool (BucketType.MAIN — pool's balance restored)
       const reversalCredit = await this.ledger.writeEntry(
         {
           walletId: systemWallet.walletId,
           entryType: EntryType.CREDIT,
           movementType: MovementType.TRANSFER,
-          bucketType: BucketType.ROSCA,
+          bucketType: BucketType.MAIN, // ← MUST be MAIN for CREDIT
           amount: amountBigInt,
           reference: `REV-CRED-${crypto.randomUUID()}`,
           sourceType: LedgerSourceType.REVERSAL,
@@ -238,7 +299,7 @@ export class PayoutService {
         tx,
       );
 
-      // Update original payout
+      // Update original payout record
       await tx.roscaPayout.update({
         where: { id: dto.originalPayoutId },
         data: {
@@ -249,13 +310,12 @@ export class PayoutService {
         },
       });
 
-      // Reset schedule for retry
+      // Reset schedule so the payout can be retried
       await tx.roscaCycleSchedule.update({
         where: { id: dto.scheduleId },
         data: { status: ScheduleStatus.UPCOMING },
       });
 
-      // Audit
       await tx.auditLog.create({
         data: {
           actorId: 'SYSTEM',
@@ -271,7 +331,7 @@ export class PayoutService {
   }
 
   /**
-   * Retry a previously failed payout
+   * Retry a previously failed payout.
    */
   async retryPayout(originalPayoutId: string): Promise<PayoutResult> {
     const failedPayout = await this.prisma.roscaPayout.findUnique({
@@ -288,34 +348,36 @@ export class PayoutService {
     return this.processPayout(failedPayout.circleId, failedPayout.schedule.cycleNumber);
   }
 
+  /**
+   * Called on the last cycle to release all member collateral back to MAIN
+   * and mark the circle COMPLETED.
+   *
+   * RELEASE entries correctly use BucketType.ROSCA — LedgerService requires
+   * a non-MAIN bucket for RESERVE/RELEASE operations.
+   */
   private async finalizeCircleAndReleaseCollateral(
     tx: Prisma.TransactionClient,
     circleId: string,
   ): Promise<void> {
     const memberships = await tx.roscaMembership.findMany({
-      where: {
-        circleId,
-        collateralReleased: false,
-      },
+      where: { circleId, collateralReleased: false },
     });
 
     for (const member of memberships) {
       const wallet = await tx.wallet.findUnique({
         where: { userId: member.userId },
       });
-
       if (!wallet) continue;
 
-      const releaseRef = `COLL-REL-${crypto.randomUUID()}`;
-
+      // RELEASE — BucketType.ROSCA is correct here (unlocking a ROSCA reservation)
       await this.ledger.writeEntry(
         {
           walletId: wallet.id,
           entryType: EntryType.RELEASE,
           movementType: MovementType.TRANSFER,
-          bucketType: BucketType.ROSCA,
+          bucketType: BucketType.ROSCA, // ← correct for RELEASE
           amount: member.collateralAmount,
-          reference: releaseRef,
+          reference: `COLL-REL-${crypto.randomUUID()}`,
           sourceType: LedgerSourceType.COLLATERAL_RELEASE,
           sourceId: member.id,
           metadata: { circleId, reason: 'CIRCLE_COMPLETED' },
@@ -352,7 +414,7 @@ export class PayoutService {
   }
 
   /**
-   * Get payout history for a circle
+   * Get payout history for a circle.
    */
   async getPayoutHistory(circleId: string) {
     return this.prisma.roscaPayout.findMany({
@@ -370,7 +432,7 @@ export class PayoutService {
   }
 
   /**
-   * Find payouts that are due (for cron jobs)
+   * Find payouts that are due (for cron jobs).
    */
   async findDuePayouts() {
     const now = new Date();
@@ -392,7 +454,7 @@ export class PayoutService {
   }
 
   /**
-   * Log payout failure for audit
+   * Log payout failure for audit.
    */
   async logPayoutFailure(scheduleId: string, error: Error) {
     await this.prisma.auditLog.create({
@@ -409,5 +471,77 @@ export class PayoutService {
         },
       },
     });
+  }
+
+  /**
+   * Enqueue a wallet.transaction.completed notification for the payout recipient.
+   * Notification failure must never surface to the caller — payouts are already committed.
+   */
+  /**
+   * After payout, find all active members who did NOT contribute this cycle
+   * and record them as missed in the trust score and credit systems.
+   */
+  private async recordMissedContributions(circleId: string, cycleNumber: number): Promise<void> {
+    const [memberships, contributions] = await Promise.all([
+      this.prisma.roscaMembership.findMany({
+        where: { circleId, status: MembershipStatus.ACTIVE },
+        select: { userId: true },
+      }),
+      this.prisma.roscaContribution.findMany({
+        where: { circleId, cycleNumber },
+        select: { membership: { select: { userId: true } } },
+      }),
+    ]);
+
+    const contributedUserIds = new Set(contributions.map((c) => c.membership.userId));
+
+    const missedUserIds = memberships
+      .map((m) => m.userId)
+      .filter((id) => !contributedUserIds.has(id));
+
+    await Promise.allSettled(
+      missedUserIds.map(async (userId) => {
+        await this.trustService.updateTrustScore(userId, { type: 'missed_payment' }, this.prisma);
+        await this.creditService.reportMissedContribution(userId);
+      }),
+    );
+
+    if (missedUserIds.length > 0) {
+      this.logger.log(
+        `Recorded missed contributions for ${missedUserIds.length} member(s) on cycle ${cycleNumber} of circle ${circleId}`,
+      );
+    }
+  }
+
+  private async enqueueTransactionEvent(
+    userId: string,
+    amountKobo: bigint,
+    payoutId: string,
+  ): Promise<void> {
+    try {
+      const user = await this.prisma.user.findUnique({
+        where: { id: userId },
+        select: { email: true, firstName: true, lastName: true },
+      });
+
+      if (!user) return;
+
+      await this.authEventsQueue.add(
+        AuthJobName.WALLET_TRANSACTION_COMPLETED,
+        {
+          userId,
+          email: user.email,
+          fullName: `${user.firstName} ${user.lastName}`,
+          type: 'CREDIT',
+          amount: Number(amountKobo) / 100, // kobo → NGN
+          currency: 'NGN',
+          reference: `PAYOUT-${payoutId}`,
+          timestamp: new Date().toISOString(),
+        },
+        { removeOnComplete: true, attempts: 3 },
+      );
+    } catch (err) {
+      this.logger.error(`Failed to enqueue payout notification for userId=${userId}`, err);
+    }
   }
 }

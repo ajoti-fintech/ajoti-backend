@@ -44,11 +44,7 @@ export class ContributionService {
    *  6. Record contribution
    *  7. Update membership stats + trust score
    */
-  async makeContribution(
-    userId: string,
-    circleId: string,
-    cycleNumber: number,
-  ) {
+  async makeContribution(userId: string, circleId: string, cycleNumber: number) {
     return await this.prisma.$transaction(
       async (tx) => {
         // ── 1. Load & validate ─────────────────────────────────────────────
@@ -74,9 +70,7 @@ export class ContributionService {
 
         const schedule = circle.schedules[0];
         if (!schedule) {
-          throw new BadRequestException(
-            `No active schedule found for cycle ${cycleNumber}`,
-          );
+          throw new BadRequestException(`No active schedule found for cycle ${cycleNumber}`);
         }
 
         // ── 2. Duplicate guard ────────────────────────────────────────────
@@ -92,9 +86,7 @@ export class ContributionService {
           },
         });
         if (existingContribution) {
-          throw new BadRequestException(
-            `You have already contributed for cycle ${cycleNumber}`,
-          );
+          throw new BadRequestException(`You have already contributed for cycle ${cycleNumber}`);
         }
 
         // ── 3. Wallets ─────────────────────────────────────────────────────
@@ -102,9 +94,7 @@ export class ContributionService {
           where: { type: SystemWalletType.PLATFORM_POOL },
         });
         if (!systemWallet) {
-          throw new InternalServerErrorException(
-            'Platform pool wallet not configured',
-          );
+          throw new InternalServerErrorException('Platform pool wallet not configured');
         }
 
         const userWallet = await tx.wallet.findUnique({ where: { userId } });
@@ -112,12 +102,19 @@ export class ContributionService {
           throw new NotFoundException('User wallet not found');
         }
 
-        // ── 4. Penalty logic ───────────────────────────────────────────────
-        const isLate = new Date() > schedule.contributionDeadline;
+        // ── 4. Late / missed logic ─────────────────────────────────────────
+        // Late: contribution arrives after the deadline but before payout (24h window).
+        // Missed: contribution arrives after payout — not accepted.
+        const now = new Date();
+        if (now >= schedule.payoutDate) {
+          throw new BadRequestException(
+            'Contribution window has closed — payout has already occurred for this cycle',
+          );
+        }
+        const isLate = now > schedule.contributionDeadline;
+        const LATE_PENALTY_PERCENT = 2; // Fixed platform rate: 2% of contribution amount
         const penalty = isLate
-          ? (circle.contributionAmount *
-              BigInt(Math.round(circle.latePenaltyPercent * 100))) /
-            10000n
+          ? (circle.contributionAmount * BigInt(Math.round(LATE_PENALTY_PERCENT * 100))) / 10000n
           : 0n;
 
         // ── 5. Pre-generate IDs ────────────────────────────────────────────
@@ -177,7 +174,7 @@ export class ContributionService {
               reference: penaltyRef,
               sourceType: LedgerSourceType.PENALTY,
               sourceId: contributionId,
-              metadata: { circleId, cycleNumber, penaltyPercent: circle.latePenaltyPercent },
+              metadata: { circleId, cycleNumber, penaltyPercent: LATE_PENALTY_PERCENT },
             },
             tx,
           );
@@ -225,7 +222,7 @@ export class ContributionService {
         // ── 9. Update trust score ──────────────────────────────────────────
         await this.trustService.updateTrustScore(
           userId,
-          { onTime: !isLate },
+          { type: 'contribution', onTime: !isLate },
           tx,
         );
 
@@ -238,11 +235,7 @@ export class ContributionService {
   /**
    * Get contribution history for a specific user in a circle.
    */
-  async getContributions(
-    circleId: string,
-    userId: string,
-    query: ListContributionsQueryDto = {},
-  ) {
+  async getContributions(circleId: string, userId: string, query: ListContributionsQueryDto = {}) {
     const { cycleNumber, limit, offset } = query;
 
     return await this.prisma.roscaContribution.findMany({

@@ -1,5 +1,5 @@
 import { Module, MiddlewareConsumer, NestModule } from '@nestjs/common';
-import { ConfigModule, ConfigService } from '@nestjs/config';
+import { ConfigModule, ConfigService, ConfigType } from '@nestjs/config';
 import { APP_GUARD } from '@nestjs/core';
 import { ThrottlerModule } from '@nestjs/throttler';
 import { ScheduleModule } from '@nestjs/schedule';
@@ -7,7 +7,7 @@ import { HealthModule } from '@/modules/health/health.module';
 import { PrismaModule } from '@/prisma/prisma.module';
 import { LoggerMiddleware } from '@/common/interceptors/logger.middleware';
 import { appConfig } from '@/config/app.config';
-import { flutterwaveConfig } from '@/config/flutterwave.config'; // ← NEW
+import { flutterwaveConfig } from '@/config/flutterwave.config';
 import { WalletModule } from './modules/wallet/wallet.module';
 import { WebhooksModule } from './modules/webhooks/webhooks.module';
 import { AuthModule } from './modules/auth/auth.module';
@@ -22,11 +22,16 @@ import { PayoutModule } from './modules/payout/payout.module';
 import { TrustModule } from './modules/trust/trust.module';
 import { TransactionsModule } from './modules/transactions/transactions.module';
 import { FundingModule } from './modules/funding/funding.module';
-import { KafkaModule } from './modules/kafka/kafka.module';
 import { NotificationModule } from './modules/notification/notification.module';
 import { WithdrawalModule } from './modules/withdrawal/withdrawal.module';
 import { VirtualAccountModule } from './modules/virtual-accounts/virtual-account.module'; // ← NEW
 import { OtpModule } from './modules/otp/otp.module';
+import { CreditModule } from './modules/credit/credit.module';
+import { LoanModule } from './modules/loans/loans.module';
+import redisConfig from './config/redis.config';
+import { BullModule } from '@nestjs/bullmq';
+import { ThrottlerStorageRedisService } from 'nestjs-throttler-storage-redis';
+import { RedisOptions } from 'ioredis';
 
 const ENV = process.env.NODE_ENV || 'development';
 
@@ -34,23 +39,42 @@ const ENV = process.env.NODE_ENV || 'development';
   imports: [
     ConfigModule.forRoot({
       isGlobal: true,
-      load: [appConfig, flutterwaveConfig], // ← flutterwaveConfig added
+      load: [appConfig, flutterwaveConfig, redisConfig], // ← flutterwaveConfig added
       envFilePath: [`.env.${ENV}.local`, `.env.${ENV}`, '.env.local', '.env'],
     }),
 
     ScheduleModule.forRoot(),
 
+    // Inside AppModule imports...
+
+    BullModule.forRootAsync({
+      imports: [ConfigModule],
+      inject: [redisConfig.KEY],
+      useFactory: (redis: ConfigType<typeof redisConfig>) => {
+        return {
+          connection: redis.connection,
+          maxRetriesPerRequest: null, // This fixes the 'MaxRetriesPerRequestError'
+        };
+      },
+    }),
+
     ThrottlerModule.forRootAsync({
-      inject: [ConfigService],
-      useFactory: (config: ConfigService) => ({
-        throttlers: [
-          {
-            name: 'default',
-            ttl: config.get<number>('THROTTLE_TTL', 60_000),
-            limit: config.get<number>('THROTTLE_LIMIT', 100),
-          },
-        ],
-      }),
+      imports: [ConfigModule],
+      inject: [ConfigService, redisConfig.KEY],
+      useFactory: (config: ConfigService, redis: ConfigType<typeof redisConfig>) => {
+        return {
+          throttlers: [
+            {
+              ttl: config.get('THROTTLE_TTL', 60000),
+              limit: config.get('THROTTLE_LIMIT', 100),
+            },
+          ],
+          storage:
+            typeof redis.storage === 'string'
+              ? new ThrottlerStorageRedisService(redis.storage)
+              : new ThrottlerStorageRedisService(redis.storage as RedisOptions),
+        };
+      },
     }),
 
     PrismaModule,
@@ -67,11 +91,13 @@ const ENV = process.env.NODE_ENV || 'development';
     TrustModule,
     TransactionsModule,
     FundingModule,
-    KafkaModule,
+    // KafkaModule,
     NotificationModule,
     WithdrawalModule,
     VirtualAccountModule,
     OtpModule,
+    CreditModule,
+    LoanModule,
   ],
   providers: [
     AppService,

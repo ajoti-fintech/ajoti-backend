@@ -3,11 +3,11 @@ import {
   BadRequestException,
   ForbiddenException,
   Injectable,
-  UnauthorizedException,
   Logger,
-  // ServiceUnavailableException,
+  UnauthorizedException,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import { InjectQueue } from '@nestjs/bullmq';
 import { JwtService } from '@nestjs/jwt';
 import {
   ChangePasswordDto,
@@ -16,13 +16,15 @@ import {
   ResetPasswordDto,
   VerifyEmailDto,
 } from './dto/auth.dto';
-import { OTPPurpose, Role } from '@prisma/client';
-import { hashValue, verifyHash } from '@/common';
+import { OTPPurpose, Prisma, Role } from '@prisma/client';
+import { hashValue, normalizeEmail, verifyHash } from '@/common';
 import * as crypto from 'crypto';
+import { Queue } from 'bullmq';
+import { StringValue } from 'ms';
 import { resetPasswordOtpTemplate } from '../mail/templates/otp-reset-password';
 import { verificationOtpTemplate } from '../mail/templates/otp-verification';
-import { KafkaService } from '../kafka/kafka.service';
 import { OtpService } from '../otp/otp.service';
+import { AUTH_EVENTS_QUEUE, AuthJobName } from './auth.events';
 
 function sha256(input: string) {
   return crypto.createHash('sha256').update(input).digest('hex');
@@ -34,28 +36,78 @@ export class AuthService {
     private prisma: PrismaService,
     private config: ConfigService,
     private jwt: JwtService,
-    private readonly kafkaService: KafkaService,
     private readonly otpService: OtpService,
+    @InjectQueue(AUTH_EVENTS_QUEUE) private readonly authEventsQueue: Queue,
   ) {}
 
   private logger = new Logger('HTTP');
 
+  private async findActiveUserByEmail<T extends Prisma.UserSelect>(
+    email: string,
+    select: T,
+  ): Promise<Prisma.UserGetPayload<{ select: T }> | null> {
+    return this.prisma.user.findFirst({
+      where: {
+        email: {
+          equals: normalizeEmail(email),
+          mode: 'insensitive',
+        },
+      },
+      select,
+    });
+  }
+
+  private async findUserByAnyEmail<T extends Prisma.UserSelect>(
+    email: string,
+    select: T,
+  ): Promise<Prisma.UserGetPayload<{ select: T }> | null> {
+    return this.prisma.user.findFirst({
+      where: {
+        OR: [
+          {
+            email: {
+              equals: normalizeEmail(email),
+              mode: 'insensitive',
+            },
+          },
+          {
+            pendingEmail: {
+              equals: normalizeEmail(email),
+              mode: 'insensitive',
+            },
+          },
+        ],
+      },
+      select,
+    });
+  }
+
   private async issueTokens(userId: string, role: Role) {
-    const access = await this.jwt.signAsync(
+    await this.prisma.refreshToken.updateMany({
+      where: {
+        userId,
+        revokedAt: null,
+      },
+      data: {
+        revokedAt: new Date(),
+      },
+    });
+
+    const accessExpires = this.config.get<string>('JWT_ACCESS_EXPIRES_IN') || '1h';
+    const accessToken = await this.jwt.signAsync(
       { sub: userId, role },
       {
         secret: this.config.get<string>('JWT_ACCESS_SECRET'),
-        expiresIn: this.config.get<number>('JWT_ACCESS_EXPIRES_IN') || '15m',
+        expiresIn: accessExpires as StringValue,
       },
     );
 
     const refreshRaw = crypto.randomBytes(48).toString('hex');
     const refreshHash = sha256(refreshRaw);
 
-    const refreshDays = (this.config.get<string>('JWT_REFRESH_EXPIRES_IN') || '30d').toLowerCase();
-    // quick parse: "30d" only (keep it simple)
-    const days = Number(refreshDays.replace('d', '')) || 30;
-    const refreshExpires = new Date(Date.now() + days * 24 * 60 * 60_000);
+    const refreshExpiresIn = this.config.get<string>('JWT_REFRESH_EXPIRES_IN') || '30d';
+    const days = Number(refreshExpiresIn.toLowerCase().replace(/[^0-9]/g, '')) || 7;
+    const refreshExpires = new Date(Date.now() + days * 24 * 60 * 60 * 1000);
 
     await this.prisma.refreshToken.create({
       data: {
@@ -65,11 +117,39 @@ export class AuthService {
       },
     });
 
-    return { accessToken: access, refreshToken: refreshRaw };
+    return {
+      accessToken,
+      refreshToken: refreshRaw,
+      expiresIn: accessExpires,
+    };
+  }
+
+  async refreshTokens(refreshToken: string) {
+    if (!refreshToken) throw new BadRequestException('Refresh token is required');
+
+    const tokenHash = sha256(refreshToken);
+
+    const storedToken = await this.prisma.refreshToken.findFirst({
+      where: {
+        tokenHash,
+        revokedAt: null,
+        expiresAt: { gt: new Date() },
+      },
+      include: { user: true },
+    });
+
+    if (!storedToken) {
+      throw new UnauthorizedException('Invalid or expired refresh token');
+    }
+
+    return this.issueTokens(storedToken.user.id, storedToken.user.role);
   }
 
   async register(registerDto: RegisterDto) {
-    const exists = await this.prisma.user.findUnique({ where: { email: registerDto.email } });
+    const normalizedEmail = normalizeEmail(registerDto.email);
+    const exists = await this.findUserByAnyEmail(normalizedEmail, {
+      id: true,
+    });
     if (exists) throw new BadRequestException('User with email already exists');
 
     const passwordHash = await hashValue(registerDto.password);
@@ -79,12 +159,12 @@ export class AuthService {
       data: {
         firstName: registerDto.firstName,
         lastName: registerDto.lastName,
-        email: registerDto.email,
+        email: normalizedEmail,
         dob,
         gender: registerDto.gender,
         phone: registerDto.phone,
         password: passwordHash,
-        role: Role.MEMBER,
+        role: registerDto.role,
         profile: { create: {} },
         kyc: { create: {} },
       },
@@ -92,25 +172,35 @@ export class AuthService {
     });
 
     const fullName = `${registerDto.firstName} ${registerDto.lastName}`;
-    await this.otpService.sendOtp(registerDto.email, OTPPurpose.VERIFICATION, {
+    await this.otpService.sendOtp(normalizedEmail, OTPPurpose.VERIFICATION, {
       subject: 'Verify your email',
       buildHtml: (args) => verificationOtpTemplate(args.otp, args.expiryMinutes, fullName),
     });
 
-    await this.kafkaService.emit('auth.user.registered', {
-      userId: user.id,
-      email: user.email,
-      fullName,
-      timestamp: new Date().toISOString(),
-    });
+    await this.authEventsQueue.add(
+      AuthJobName.USER_REGISTERED,
+      {
+        userId: user.id,
+        email: user.email,
+        fullName,
+        timestamp: new Date().toISOString(),
+      },
+      {
+        removeOnComplete: true,
+        attempts: 5,
+      },
+    );
 
-    return { message: 'Registered, OTP sent to mail', userId: user.id };
+    return { message: 'Registered, OTP sent to mail', userEmail: user.email };
   }
 
   async registerAdmin(registerDto: RegisterDto) {
-    const existing = await this.prisma.user.findUnique({
-      where: { email: registerDto.email },
-      select: { id: true, role: true },
+    const normalizedEmail = normalizeEmail(registerDto.email);
+    const existing = await this.findUserByAnyEmail(normalizedEmail, {
+      id: true,
+      role: true,
+      email: true,
+      pendingEmail: true,
     });
 
     const passwordHash = await hashValue(registerDto.password);
@@ -119,12 +209,11 @@ export class AuthService {
     let user: { id: string; email: string };
 
     if (!existing) {
-      // Case 1: not on the system -> create as ADMIN
       user = await this.prisma.user.create({
         data: {
           firstName: registerDto.firstName,
           lastName: registerDto.lastName,
-          email: registerDto.email,
+          email: normalizedEmail,
           dob,
           gender: registerDto.gender,
           phone: registerDto.phone,
@@ -136,26 +225,24 @@ export class AuthService {
         select: { id: true, email: true },
       });
     } else {
-      // Case 2: already on the system -> upgrade to ADMIN
+      if (normalizeEmail(existing.email) !== normalizedEmail) {
+        throw new BadRequestException('User with email already exists');
+      }
+
       if (existing.role === Role.ADMIN) {
         throw new BadRequestException('User is already an admin');
       }
 
-      // IMPORTANT:
-      // Decide if you want to overwrite profile fields + password or not.
-      // Below: we upgrade role + optionally update details.
       user = await this.prisma.user.update({
         where: { id: existing.id },
         data: {
           role: Role.ADMIN,
-          // optional updates (only if you want admin registration to refresh these)
           firstName: registerDto.firstName,
           lastName: registerDto.lastName,
           dob,
           gender: registerDto.gender,
           phone: registerDto.phone,
           password: passwordHash,
-          // create these only if they don't exist
           profile: { connectOrCreate: { where: { userId: existing.id }, create: {} } },
           kyc: { connectOrCreate: { where: { userId: existing.id }, create: {} } },
         },
@@ -165,25 +252,35 @@ export class AuthService {
 
     const fullName = `${registerDto.firstName} ${registerDto.lastName}`;
 
-    await this.otpService.sendOtp(registerDto.email, OTPPurpose.VERIFICATION, {
+    await this.otpService.sendOtp(normalizedEmail, OTPPurpose.VERIFICATION, {
       subject: 'Verify your email',
       buildHtml: (args) => verificationOtpTemplate(args.otp, args.expiryMinutes, fullName),
     });
 
-    await this.kafkaService.emit('auth.user.registered', {
-      userId: user.id,
-      email: user.email,
-      fullName,
-      timestamp: new Date().toISOString(),
-    });
+    await this.authEventsQueue.add(
+      AuthJobName.USER_REGISTERED,
+      {
+        userId: user.id,
+        email: user.email,
+        fullName,
+        timestamp: new Date().toISOString(),
+      },
+      {
+        removeOnComplete: true,
+        attempts: 5,
+      },
+    );
 
     return { message: 'Registered/Upgraded, OTP sent to mail', userId: user.id };
   }
 
   async resendVerificationOtp(email: string) {
-    const user = await this.prisma.user.findUnique({
-      where: { email },
-      select: { id: true, isVerified: true, firstName: true, lastName: true },
+    const user = await this.findActiveUserByEmail(email, {
+      id: true,
+      email: true,
+      isVerified: true,
+      firstName: true,
+      lastName: true,
     });
 
     if (!user) return;
@@ -191,16 +288,19 @@ export class AuthService {
     if (user.isVerified) throw new BadRequestException('Email already verified');
 
     const fullName = `${user.firstName} ${user.lastName}`;
-    await this.otpService.sendOtp(email, OTPPurpose.VERIFICATION, {
+    await this.otpService.sendOtp(user.email, OTPPurpose.VERIFICATION, {
       subject: 'Verify your email',
       buildHtml: (args) => verificationOtpTemplate(args.otp, args.expiryMinutes, fullName),
     });
   }
 
   async resendResetPasswordOtp(email: string) {
-    const user = await this.prisma.user.findUnique({
-      where: { email },
-      select: { id: true, isVerified: true, firstName: true, lastName: true },
+    const user = await this.findActiveUserByEmail(email, {
+      id: true,
+      email: true,
+      isVerified: true,
+      firstName: true,
+      lastName: true,
     });
 
     if (!user) return;
@@ -208,7 +308,7 @@ export class AuthService {
     if (user.isVerified) throw new BadRequestException('Email already verified');
 
     const fullName = `${user.firstName} ${user.lastName}`;
-    await this.otpService.sendOtp(email, OTPPurpose.RESET_PASSWORD, {
+    await this.otpService.sendOtp(user.email, OTPPurpose.RESET_PASSWORD, {
       subject: 'Reset your password',
       buildHtml: (args) => resetPasswordOtpTemplate(args.otp, args.expiryMinutes, fullName),
     });
@@ -226,17 +326,31 @@ export class AuthService {
       data: { isVerified: true },
     });
 
-    await this.kafkaService.emit('auth.email.verified', {
-      userId: user.id,
-      email: user.email,
-      timestamp: new Date().toISOString(),
-    });
+    await this.authEventsQueue.add(
+      AuthJobName.EMAIL_VERIFIED,
+      {
+        userId: user.id,
+        email: user.email,
+        fullName: `${user.firstName} ${user.lastName}`,
+        timestamp: new Date().toISOString(),
+      },
+      {
+        removeOnComplete: true,
+        attempts: 5,
+      },
+    );
 
     return { message: 'email verified' };
   }
 
   async login(email: string, password: string) {
-    const user = await this.prisma.user.findUnique({ where: { email } });
+    const user = await this.findActiveUserByEmail(email, {
+      id: true,
+      email: true,
+      password: true,
+      role: true,
+      isVerified: true,
+    });
     if (!user) throw new UnauthorizedException('Invalid credentials');
 
     const ok = await verifyHash(password, user.password);
@@ -248,15 +362,7 @@ export class AuthService {
 
     const tokens = await this.issueTokens(user.id, user.role);
 
-    await this.kafkaService.emit('auth.user.logged-in', {
-      userId: user.id,
-      email: user.email,
-      timestamp: new Date().toISOString(),
-    });
-
     return {
-      // message: 'Logged in',
-      // user: { id: user.id, email: user.email, role: user.role },
       ...tokens,
     };
   }
@@ -274,12 +380,16 @@ export class AuthService {
   }
 
   async forgotPassword(forgotPasswordDto: ForgotPasswordDto) {
-    // don’t leak whether email exists (optional)
-    const user = await this.prisma.user.findUnique({ where: { email: forgotPasswordDto.email } });
+    const user = await this.findActiveUserByEmail(forgotPasswordDto.email, {
+      id: true,
+      email: true,
+      firstName: true,
+      lastName: true,
+    });
 
     if (user) {
       const fullName = `${user.firstName} ${user.lastName}`;
-      await this.otpService.sendOtp(forgotPasswordDto.email, OTPPurpose.RESET_PASSWORD, {
+      await this.otpService.sendOtp(user.email, OTPPurpose.RESET_PASSWORD, {
         subject: 'Reset your password',
         buildHtml: (args) => resetPasswordOtpTemplate(args.otp, args.expiryMinutes, fullName),
       });
@@ -302,17 +412,24 @@ export class AuthService {
       data: { password: newHash },
     });
 
-    // revoke all refresh tokens
     await this.prisma.refreshToken.updateMany({
       where: { userId: user.id, revokedAt: null },
       data: { revokedAt: new Date() },
     });
 
-    await this.kafkaService.emit('auth.password.reset', {
-      userId: user.id,
-      email: user.email,
-      timestamp: new Date().toISOString(),
-    });
+    await this.authEventsQueue.add(
+      AuthJobName.PASSWORD_RESET,
+      {
+        userId: user.id,
+        email: user.email,
+        fullName: `${user.firstName} ${user.lastName}`,
+        timestamp: new Date().toISOString(),
+      },
+      {
+        removeOnComplete: true,
+        attempts: 5,
+      },
+    );
 
     return { message: 'Password reset successful.' };
   }
@@ -331,17 +448,24 @@ export class AuthService {
       data: { password: newHash },
     });
 
-    // revoke existing refresh tokens (forces re-login everywhere)
     await this.prisma.refreshToken.updateMany({
       where: { userId: userId, revokedAt: null },
       data: { revokedAt: new Date() },
     });
 
-    await this.kafkaService.emit('auth.password.changed', {
-      userId: user.id,
-      email: user.email,
-      timestamp: new Date().toISOString(),
-    });
+    await this.authEventsQueue.add(
+      AuthJobName.PASSWORD_CHANGED,
+      {
+        userId: user.id,
+        email: user.email,
+        fullName: `${user.firstName} ${user.lastName}`,
+        timestamp: new Date().toISOString(),
+      },
+      {
+        removeOnComplete: true,
+        attempts: 5,
+      },
+    );
 
     return { message: 'Password changed.' };
   }

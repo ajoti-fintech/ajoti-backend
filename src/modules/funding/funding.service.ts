@@ -1,12 +1,22 @@
 // src/modules/funding/funding.service.ts
-import { Injectable, BadRequestException, Logger } from '@nestjs/common';
+import {
+  Injectable,
+  BadRequestException,
+  ForbiddenException,
+  Logger,
+  NotFoundException,
+} from '@nestjs/common';
 import * as crypto from 'crypto';
 import { PrismaService } from '@/prisma/prisma.service';
 import { WalletService } from '../wallet/wallet.service';
 import { InitializeFundingDto } from './dto/funding.dto';
-import { TransactionStatus, TransactionType } from '@prisma/client';
+import { Prisma, TransactionStatus, TransactionType } from '@prisma/client';
 import { TransactionsService } from '../transactions/transactions.service';
 import { FlutterwaveProvider } from '../flutterwave/flutterwave.provider';
+import {
+  FundingReconciliationScheduler,
+  ManualFundingReconcileResult,
+} from './funding-reconciliation.scheduler';
 
 @Injectable()
 export class FundingService {
@@ -17,6 +27,7 @@ export class FundingService {
     private readonly transactionsService: TransactionsService,
     private readonly flw: FlutterwaveProvider,
     private readonly prisma: PrismaService,
+    private readonly fundingReconciliationScheduler: FundingReconciliationScheduler,
   ) {}
 
   /**
@@ -39,6 +50,7 @@ export class FundingService {
     }
 
     const reference = `AJT-FUND-${crypto.randomUUID()}`;
+    const initializedAt = new Date().toISOString();
 
     // Record the intent — PENDING until webhook confirms
     const transaction = await this.transactionsService.create({
@@ -50,9 +62,11 @@ export class FundingService {
       currency: dto.currency ?? 'NGN',
       provider: 'FLUTTERWAVE',
       metadata: {
-        paymentMethod: dto.paymentMethod,
-        ...dto.metadata,
-      },
+        ...(dto.metadata ?? {}),
+        source: 'HOSTED_CHECKOUT',
+        initializedAt,
+        redirectUrl: dto.redirectUrl,
+      } as Prisma.InputJsonValue,
     });
 
     const user = await this.prisma.user.findUnique({ where: { id: userId } });
@@ -68,7 +82,7 @@ export class FundingService {
         name: user ? `${user.firstName} ${user.lastName}`.trim() : undefined,
         phonenumber: user?.phone ?? undefined,
       },
-      // All three channels in one hosted checkout
+      // Let checkout UI handle method selection (card, bank transfer, ussd).
       payment_options: 'card,banktransfer,ussd',
       meta: {
         transactionId: transaction.id,
@@ -90,6 +104,14 @@ export class FundingService {
       );
       throw new BadRequestException(
         providerResponse.message ?? 'Payment provider unavailable. Please try again.',
+      );
+    }
+
+    try {
+      await this.fundingReconciliationScheduler.scheduleInitialVerification(reference);
+    } catch (error) {
+      this.logger.warn(
+        `Funding background verification could not be queued for ref=${reference}: ${error instanceof Error ? error.message : String(error)}`,
       );
     }
 
@@ -125,8 +147,72 @@ export class FundingService {
         icon: 'phone',
         fee: 0,
         minAmount: 10000,
-        description: 'Use your bank\'s USSD code. No internet required.',
+        description: "Use your bank's USSD code. No internet required.",
       },
     ];
+  }
+
+  /**
+   * Called by the frontend immediately after Flutterwave redirects the user back.
+   * Verifies the payment with Flutterwave on-demand and credits the wallet if successful.
+   * Ownership is enforced — users can only verify their own transactions.
+   */
+  async verifyFunding(
+    userId: string,
+    reference: string,
+  ): Promise<{ status: 'success' | 'pending' | 'failed'; message: string }> {
+    const transaction = await this.prisma.transaction.findUnique({
+      where: { reference },
+      include: { wallet: true },
+    });
+
+    if (!transaction) throw new NotFoundException('Transaction not found');
+    if (transaction.wallet.userId !== userId) {
+      throw new ForbiddenException('Access denied');
+    }
+
+    if (transaction.status === 'SUCCESS') {
+      return { status: 'success', message: 'Payment already confirmed' };
+    }
+
+    if (transaction.status === 'FAILED') {
+      return { status: 'failed', message: 'Payment was unsuccessful' };
+    }
+
+    // Still PENDING — trigger on-demand reconciliation
+    const result = await this.fundingReconciliationScheduler.reconcileByReference(
+      reference,
+      userId,
+      'USER_VERIFY',
+    );
+
+    if (result.outcome === 'settled' || result.outcome === 'already_processed') {
+      return { status: 'success', message: 'Payment confirmed and wallet credited' };
+    }
+
+    if (result.outcome === 'marked_failed') {
+      return { status: 'failed', message: 'Payment could not be verified' };
+    }
+
+    if (result.outcome === 'still_pending') {
+      return { status: 'pending', message: 'Payment is still being processed by the provider' };
+    }
+
+    return { status: 'pending', message: 'Verification in progress' };
+  }
+
+  async manualReconcileByReference(
+    reference: string,
+    superAdminId: string,
+  ): Promise<ManualFundingReconcileResult> {
+    const normalizedReference = reference.trim();
+    if (!normalizedReference) {
+      throw new BadRequestException('Transaction reference is required');
+    }
+
+    return this.fundingReconciliationScheduler.reconcileByReference(
+      normalizedReference,
+      superAdminId,
+    );
   }
 }

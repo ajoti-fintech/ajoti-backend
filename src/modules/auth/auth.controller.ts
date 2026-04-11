@@ -124,6 +124,20 @@ export class AuthController {
     return this.auth.logout(req.user.userId, dto.refreshToken);
   }
 
+  @Post('refresh')
+  @HttpCode(HttpStatus.OK)
+  @Throttle({ default: { ttl: 600_000, limit: 10 } })
+  @ApiOperation({
+    summary: 'Refresh tokens',
+    description: 'Exchange a valid refresh token for a new access + refresh token pair',
+  })
+  @ApiBody({ type: LogoutDto })
+  @ApiOkResponse({ description: 'New token pair issued' })
+  @ApiUnauthorizedResponse({ description: 'Invalid or expired refresh token' })
+  async refresh(@Body() dto: LogoutDto) {
+    return this.auth.refreshTokens(dto.refreshToken);
+  }
+
   @Post('forget-password')
   @HttpCode(HttpStatus.OK)
   @Throttle({ default: { ttl: 600_000, limit: 5 } })

@@ -15,18 +15,18 @@ async function bootstrap() {
   const logger = new Logger('Bootstrap');
 
   // Kafka microservice setup
-  app.connectMicroservice({
-    transport: Transport.KAFKA,
-    options: {
-      client: {
-        clientId: configService.get<string>('KAFKA_CLIENT_ID', 'ajoti-api'),
-        brokers: [configService.get<string>('KAFKA_BROKERS', 'kafka:29092')],
-      },
-      consumer: {
-        groupId: configService.get<string>('KAFKA_GROUP_ID', 'ajoti-consumer'),
-      },
-    },
-  });
+  // app.connectMicroservice({
+  //   transport: Transport.KAFKA,
+  //   options: {
+  //     client: {
+  //       clientId: configService.get<string>('KAFKA_CLIENT_ID', 'ajoti-api'),
+  //       brokers: [configService.get<string>('KAFKA_BROKERS', 'kafka:29092')],
+  //     },
+  //     consumer: {
+  //       groupId: configService.get<string>('KAFKA_GROUP_ID', 'ajoti-consumer'),
+  //     },
+  //   },
+  // });
 
   app.useBodyParser('json', {
     verify: (req: any, _res: any, buf: Buffer) => {
@@ -93,8 +93,8 @@ async function bootstrap() {
   });
 
   // Start the Kafka microservice
-  await app.startAllMicroservices();
-  logger.log('Kafka microservice started');
+  // await app.startAllMicroservices();
+  // logger.log('Kafka microservice started');
 
   await app.listen(port);
 
