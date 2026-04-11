@@ -275,6 +275,37 @@ export class RoscaService {
     });
   }
 
+  async getPayoutConfiguration(circleId: string, adminId: string) {
+    const circle = await this.prisma.roscaCircle.findUnique({
+      where: { id: circleId },
+      include: {
+        memberships: {
+          where: { status: MembershipStatus.ACTIVE },
+          select: {
+            userId: true,
+            payoutPosition: true,
+            user: { select: { firstName: true, lastName: true } },
+          },
+          orderBy: { payoutPosition: 'asc' },
+        },
+      },
+    });
+
+    if (!circle) throw new NotFoundException('Circle not found');
+    if (circle.adminId !== adminId)
+      throw new ForbiddenException('Only the circle admin can view payout configuration');
+
+    const assignments = circle.memberships.map((m) => ({
+      userId: m.userId,
+      name: `${m.user.firstName} ${m.user.lastName}`,
+      position: m.payoutPosition,
+    }));
+
+    const allAssigned = assignments.every((a) => a.position !== null);
+
+    return { payoutLogic: circle.payoutLogic, allAssigned, assignments };
+  }
+
   private addFrequency(date: Date, frequency: string): Date {
     const result = new Date(date);
     switch (frequency) {

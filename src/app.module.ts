@@ -22,7 +22,6 @@ import { PayoutModule } from './modules/payout/payout.module';
 import { TrustModule } from './modules/trust/trust.module';
 import { TransactionsModule } from './modules/transactions/transactions.module';
 import { FundingModule } from './modules/funding/funding.module';
-// import { KafkaModule } from './modules/kafka/kafka.module';
 import { NotificationModule } from './modules/notification/notification.module';
 import { WithdrawalModule } from './modules/withdrawal/withdrawal.module';
 import { VirtualAccountModule } from './modules/virtual-accounts/virtual-account.module'; // ← NEW
@@ -32,7 +31,7 @@ import { LoanModule } from './modules/loans/loans.module';
 import redisConfig from './config/redis.config';
 import { BullModule } from '@nestjs/bullmq';
 import { ThrottlerStorageRedisService } from 'nestjs-throttler-storage-redis';
-
+import { RedisOptions } from 'ioredis';
 
 const ENV = process.env.NODE_ENV || 'development';
 
@@ -73,7 +72,7 @@ const ENV = process.env.NODE_ENV || 'development';
           storage:
             typeof redis.storage === 'string'
               ? new ThrottlerStorageRedisService(redis.storage)
-              : new ThrottlerStorageRedisService(redis.storage),
+              : new ThrottlerStorageRedisService(redis.storage as RedisOptions),
         };
       },
     }),

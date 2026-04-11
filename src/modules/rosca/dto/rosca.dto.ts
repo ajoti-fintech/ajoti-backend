@@ -249,23 +249,59 @@ export class RoscaCycleScheduleResponseDto {
 }
 
 export class MemberPositionAssignmentDto {
+  @ApiProperty({ description: 'User ID of the member' })
   @IsString()
   userId!: string;
 
+  @ApiProperty({ description: 'Payout position (1 = first to receive, N = last)', minimum: 1 })
   @IsInt()
+  @Min(1)
   position!: number;
 }
 
 export class UpdatePayoutConfigDto {
+  @ApiPropertyOptional({
+    enum: PayoutLogic,
+    description:
+      'Payout ordering strategy. ' +
+      'RANDOM_DRAW = shuffled at activation; ' +
+      'SEQUENTIAL = order of joining; ' +
+      'TRUST_SCORE = highest ATI score first; ' +
+      'ADMIN_ASSIGNED = positions set manually via `assignments`; ' +
+      'COMBINED = trust score then join date',
+  })
   @IsOptional()
   @IsEnum(PayoutLogic)
   payoutLogic?: PayoutLogic;
 
+  @ApiPropertyOptional({
+    type: [MemberPositionAssignmentDto],
+    description:
+      'Required when payoutLogic is ADMIN_ASSIGNED. ' +
+      'Each entry maps a member userId to their payout position. ' +
+      'Positions must be unique integers starting from 1. ' +
+      'All active members must be assigned before the circle can be activated.',
+  })
   @IsOptional()
   @IsArray()
   @ValidateNested({ each: true })
   @Type(() => MemberPositionAssignmentDto)
   assignments?: MemberPositionAssignmentDto[];
+}
+
+// ── Payout Assignments (read) ───────────────────
+
+export class PayoutAssignmentItemDto {
+  @ApiProperty() userId!: string;
+  @ApiProperty() name!: string;
+  @ApiProperty({ nullable: true, description: 'null if not yet assigned' }) position!: number | null;
+}
+
+export class PayoutConfigResponseDto {
+  @ApiProperty({ enum: PayoutLogic }) payoutLogic!: PayoutLogic;
+  @ApiProperty({ description: 'Whether all active members have been assigned a position' })
+  allAssigned!: boolean;
+  @ApiProperty({ type: [PayoutAssignmentItemDto] }) assignments!: PayoutAssignmentItemDto[];
 }
 
 // ── My Pending Join Requests ────────────────────

@@ -35,6 +35,7 @@ import {
   RoscaCycleScheduleResponseDto,
   formatScheduleResponse,
   UpdatePayoutConfigDto,
+  PayoutConfigResponseDto,
   UpdateCircleDto,
   MemberProgressResponseDto,
   ContributionsInResponseDto,
@@ -443,9 +444,28 @@ export class RoscaAdminController {
     };
   }
 
+  @Get(':circleId/payout-config')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: '[Admin] Get current payout logic and member position assignments' })
+  @ApiResponse({ status: 200, type: PayoutConfigResponseDto })
+  async getPayoutConfig(
+    @Param('circleId') circleId: string,
+    @CurrentUser('userId') adminId: string,
+  ) {
+    const data = await this.roscaService.getPayoutConfiguration(circleId, adminId);
+    return { success: true, message: 'Payout configuration retrieved', data };
+  }
+
   @Patch(':circleId/payout-config')
   @HttpCode(HttpStatus.OK)
-  @ApiOperation({ summary: '[Admin] Update payout logic or assign member positions' })
+  @ApiOperation({
+    summary: '[Admin] Update payout logic or assign member positions',
+    description:
+      'Only allowed while the circle is in DRAFT status. ' +
+      'If switching to ADMIN_ASSIGNED, include `assignments` with a position for every active member. ' +
+      'Positions must be unique integers ≥ 1. All members must be assigned before the circle can be activated.',
+  })
+  @ApiResponse({ status: 200, description: 'Payout configuration updated successfully' })
   async updatePayoutConfig(
     @Param('circleId') circleId: string,
     @CurrentUser('userId') adminId: string,
