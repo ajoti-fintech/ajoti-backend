@@ -9,6 +9,7 @@ import { passwordResetTemplate } from '../mail/templates/password-reset';
 import { passwordChangedTemplate } from '../mail/templates/password-change';
 import { kycStatusTemplate } from '../mail/templates/kyc-status';
 import { transactionTemplate } from '../mail/templates/transaction';
+import { payoutPositionTemplate } from '../mail/templates/payout-position';
 import { NotificationGateway } from './notification-gateway';
 
 interface CreateNotificationParams {
@@ -275,5 +276,50 @@ export class NotificationService {
       data: { isRead: true, readAt: new Date() },
     });
     return { message: 'All notifications marked as read' };
+  }
+
+  // ── Payout Position Notification ──────────────────────────────────────────
+  /**
+   * Send in-app + email notification when a member's payout position is
+   * assigned or reassigned.
+   * isReassignment = true  → admin manually changed the position
+   * isReassignment = false → initial auto-assignment on approval
+   */
+  async sendPayoutPositionNotification(
+    userId: string,
+    email: string,
+    fullName: string,
+    circleName: string,
+    position: number,
+    isReassignment: boolean,
+  ) {
+    const title = isReassignment
+      ? `Payout position updated — ${circleName}`
+      : `Payout position assigned — ${circleName}`;
+    const body = isReassignment
+      ? `Your payout position in ${circleName} has been updated to #${position} by the admin.`
+      : `You have been assigned payout position #${position} in ${circleName}.`;
+
+    // In-app notification (fire-and-forget, don't block the caller)
+    this.createInAppNotification(userId, title, body).catch((err) =>
+      this.logger.error(`Failed to create in-app notification for ${userId}`, err?.stack),
+    );
+
+    // Email
+    const record = await this.createRecord({
+      userId,
+      type: NotificationType.EMAIL,
+      title,
+      body,
+    });
+
+    try {
+      const html = payoutPositionTemplate(fullName, circleName, position, isReassignment);
+      await this.mail.send(email, title, html);
+      await this.markSent(record.id);
+    } catch (error) {
+      this.logger.error(`Failed to send payout position email to ${email}`, error?.stack);
+      await this.markFailed(record.id, error?.message);
+    }
   }
 }

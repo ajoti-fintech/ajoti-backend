@@ -214,6 +214,16 @@ export class RoscaCircleResponseDto {
   @ApiProperty() maxSlots!: number;
   @ApiProperty({ enum: CircleStatus }) status!: CircleStatus;
   @ApiProperty({
+    enum: PayoutLogic,
+    description:
+      'RANDOM_DRAW = shuffled at activation; ' +
+      'SEQUENTIAL = first-joined first; ' +
+      'TRUST_SCORE = highest ATI first; ' +
+      'ADMIN_ASSIGNED = manual order set by admin; ' +
+      'COMBINED = trust score then join date',
+  })
+  payoutLogic!: PayoutLogic;
+  @ApiProperty({
     example: '2026-05-01T10:00:00Z',
     description: 'The deadline for the first contribution. Payout occurs 24 hours after this.',
     type: String,
@@ -224,7 +234,7 @@ export class RoscaCircleResponseDto {
   @ApiProperty({ type: AdminResponseDto })
   admin!: AdminResponseDto;
   @ApiProperty({ isArray: true, description: 'List of members in the circle' })
-  members!: any[]; // You can create a MemberResponseDto later for more strictness
+  members!: any[];
 }
 
 export class RoscaMembershipResponseDto {
@@ -526,23 +536,21 @@ export function formatCircleResponse(circle: any): RoscaCircleResponseDto {
   return {
     id: circle.id,
     name: circle.name,
-    description: circle.description, // Added if you have it in your DTO
+    description: circle.description,
     contributionAmount: circle.contributionAmount.toString(),
     frequency: circle.frequency,
     durationCycles: circle.durationCycles,
     filledSlots: circle.filledSlots,
     maxSlots: circle.maxSlots,
     status: circle.status,
+    payoutLogic: circle.payoutLogic,
     initialContributionDeadline: circle.initialContributionDeadline,
     collateralPercentage: circle.collateralPercentage,
-
-    // Formatted Admin Object
     admin: {
       firstName: circle.admin.firstName,
       lastName: circle.admin.lastName,
       email: circle.admin.email,
     },
-    // NEW: Map memberships to a clean members array
     members:
       circle.memberships?.map((m: any) => ({
         userId: m.userId,
@@ -550,6 +558,9 @@ export function formatCircleResponse(circle: any): RoscaCircleResponseDto {
         status: m.status,
         position: m.payoutPosition,
         joinedAt: m.joinedAt,
+        trustScore: m.user.userTrustStats
+          ? Math.round(300 + m.user.userTrustStats.trustScore * 5.5)
+          : 575,
       })) || [],
   };
 }

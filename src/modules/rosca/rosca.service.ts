@@ -232,7 +232,10 @@ export class RoscaService {
     adminId: string,
     dto: { payoutLogic?: PayoutLogic; assignments?: { userId: string; position: number }[] },
   ) {
-    return await this.prisma.$transaction(async (tx) => {
+    // Collect members whose position actually changed so we can notify them after commit
+    const reassigned: Array<{ userId: string; email: string; fullName: string; newPosition: number }> = [];
+
+    await this.prisma.$transaction(async (tx) => {
       const circle = await tx.roscaCircle.findUnique({ where: { id: circleId } });
 
       if (!circle) throw new NotFoundException('Circle not found');
@@ -261,6 +264,18 @@ export class RoscaService {
       }
 
       if (dto.assignments && dto.assignments.length > 0) {
+        // Load current positions for all affected members before updating
+        const userIds = dto.assignments.map((a) => a.userId);
+        const current = await tx.roscaMembership.findMany({
+          where: { circleId, userId: { in: userIds } },
+          select: {
+            userId: true,
+            payoutPosition: true,
+            user: { select: { firstName: true, lastName: true, email: true } },
+          },
+        });
+        const currentMap = new Map(current.map((m) => [m.userId, m]));
+
         await Promise.all(
           dto.assignments.map((asn) =>
             tx.roscaMembership.update({
@@ -269,10 +284,47 @@ export class RoscaService {
             }),
           ),
         );
-      }
 
-      return { success: true, message: 'Payout configuration updated successfully' };
+        // Detect which positions actually changed
+        for (const asn of dto.assignments) {
+          const before = currentMap.get(asn.userId);
+          if (before && before.payoutPosition !== asn.position) {
+            reassigned.push({
+              userId: asn.userId,
+              email: before.user.email,
+              fullName: `${before.user.firstName} ${before.user.lastName}`,
+              newPosition: asn.position,
+            });
+          }
+        }
+      }
     });
+
+    // Send reassignment notifications after the transaction commits (non-blocking)
+    if (reassigned.length > 0) {
+      const circle = await this.prisma.roscaCircle.findUnique({
+        where: { id: circleId },
+        select: { name: true },
+      });
+      const circleName = circle?.name ?? 'your circle';
+
+      for (const member of reassigned) {
+        this.notifications
+          .sendPayoutPositionNotification(
+            member.userId,
+            member.email,
+            member.fullName,
+            circleName,
+            member.newPosition,
+            true, // reassignment
+          )
+          .catch((err) =>
+            console.error(`Failed to send reassignment notification to ${member.userId}`, err),
+          );
+      }
+    }
+
+    return { success: true, message: 'Payout configuration updated successfully' };
   }
 
   async getPayoutConfiguration(circleId: string, adminId: string) {
@@ -604,7 +656,11 @@ export class RoscaService {
           where: { status: { in: [MembershipStatus.ACTIVE, MembershipStatus.COMPLETED] } },
           include: {
             user: {
-              select: { firstName: true, lastName: true },
+              select: {
+                firstName: true,
+                lastName: true,
+                userTrustStats: { select: { trustScore: true } },
+              },
             },
           },
         },
@@ -904,10 +960,7 @@ export class RoscaService {
   }
 
   async approveMember(circleId: string, adminId: string, userId: string) {
-    return await this.prisma.$transaction(async (tx) => {
-      // FIX: replaced non-null assertion (circle!) with an explicit guard.
-      // Previously a missing circle would throw a cryptic runtime error instead
-      // of a clean NotFoundException.
+    const membership = await this.prisma.$transaction(async (tx) => {
       const circle = await tx.roscaCircle.findUnique({ where: { id: circleId } });
       if (!circle) throw new NotFoundException('Circle not found');
 
@@ -915,25 +968,45 @@ export class RoscaService {
         throw new BadRequestException('Only circle admin can approve');
       }
 
-      const membership = await tx.roscaMembership.update({
-        where: {
-          circleId_userId: { circleId, userId },
-        },
+      // Auto-assign last slot: position = filledSlots + 1 (before incrementing)
+      const newPosition = circle.filledSlots + 1;
+
+      const updated = await tx.roscaMembership.update({
+        where: { circleId_userId: { circleId, userId } },
         data: {
           status: MembershipStatus.ACTIVE,
           approvedAt: new Date(),
+          payoutPosition: newPosition,
+        },
+        include: {
+          user: { select: { firstName: true, lastName: true, email: true } },
         },
       });
 
       await tx.roscaCircle.update({
         where: { id: circleId },
-        data: {
-          filledSlots: { increment: 1 },
-        },
+        data: { filledSlots: { increment: 1 } },
       });
 
-      return membership;
+      return { membership: updated, circleName: circle.name, newPosition };
     });
+
+    // Send initial position notification outside the transaction (non-blocking)
+    const { user } = membership.membership;
+    this.notifications
+      .sendPayoutPositionNotification(
+        userId,
+        user.email,
+        `${user.firstName} ${user.lastName}`,
+        membership.circleName,
+        membership.newPosition,
+        false, // initial assignment, not a reassignment
+      )
+      .catch((err) =>
+        console.error('Failed to send payout position notification', err),
+      );
+
+    return membership.membership;
   }
 
   async rejectMember(circleId: string, adminId: string, userId: string) {
