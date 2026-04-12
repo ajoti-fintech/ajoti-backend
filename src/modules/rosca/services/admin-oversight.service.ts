@@ -2,6 +2,7 @@
 import { Injectable, ForbiddenException, NotFoundException } from '@nestjs/common';
 import { MembershipStatus, PayoutStatus, ScheduleStatus } from '@prisma/client';
 import { PrismaService } from '../../../prisma/prisma.service';
+import { LedgerService } from '../../ledger/ledger.service';
 import { NotificationService } from '../../notification/notification.service';
 import { AdminListCirclesQueryDto } from '../dto/admin.dto';
 
@@ -9,6 +10,7 @@ import { AdminListCirclesQueryDto } from '../dto/admin.dto';
 export class AdminOversightService {
   constructor(
     private prisma: PrismaService,
+    private ledger: LedgerService,
     private notifications: NotificationService,
   ) {}
 
@@ -388,5 +390,70 @@ export class AdminOversightService {
     );
 
     return { notified: missing.length, cycleNumber };
+  }
+
+  // =========================================================================
+  // TOP-UP REMINDER
+  // =========================================================================
+
+  /**
+   * Notifies active members whose available wallet balance is below the circle's
+   * contribution amount, prompting them to top up before the next deadline.
+   */
+  async notifyLowBalanceMembers(circleId: string, adminId: string) {
+    const circle = await this.assertAdminOwnsCircle(circleId, adminId);
+
+    const members = await this.prisma.roscaMembership.findMany({
+      where: { circleId, status: MembershipStatus.ACTIVE },
+      select: {
+        userId: true,
+        user: {
+          select: {
+            firstName: true,
+            lastName: true,
+            email: true,
+            wallet: { select: { id: true } },
+          },
+        },
+      },
+    });
+
+    const requiredKobo = circle.contributionAmount;
+    const requiredNaira = (Number(requiredKobo) / 100).toLocaleString('en-NG', {
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 2,
+    });
+
+    // Check balances in parallel, notify only those below the threshold
+    const checks = await Promise.allSettled(
+      members.map(async (m) => {
+        const walletId = m.user.wallet?.id;
+        if (!walletId) return null;
+
+        const balance = await this.ledger.getDetailedBalance(walletId);
+        if (balance.available < requiredKobo) {
+          const availableNaira = (Number(balance.available) / 100).toLocaleString('en-NG', {
+            minimumFractionDigits: 2,
+            maximumFractionDigits: 2,
+          });
+          await this.notifications.sendTopUpReminderNotification(
+            m.userId,
+            m.user.email,
+            `${m.user.firstName} ${m.user.lastName}`,
+            circle.name,
+            requiredNaira,
+            availableNaira,
+          );
+          return m.userId;
+        }
+        return null;
+      }),
+    );
+
+    const notified = checks.filter(
+      (r) => r.status === 'fulfilled' && r.value !== null,
+    ).length;
+
+    return { notified, total: members.length };
   }
 }

@@ -68,15 +68,15 @@ export class CircleService {
       );
     }
 
-    return await this.prisma.$transaction(
+    const circle = await this.prisma.$transaction(
       async (tx) => {
-        const circle = await tx.roscaCircle.findUnique({
+        const c = await tx.roscaCircle.findUnique({
           where: { id: circleId },
           include: { _count: { select: { memberships: true } } },
         });
 
-        if (!circle) throw new NotFoundException('Circle not found');
-        if (circle.status !== CircleStatus.DRAFT) {
+        if (!c) throw new NotFoundException('Circle not found');
+        if (c.status !== CircleStatus.DRAFT) {
           throw new BadRequestException('Circle already activated');
         }
 
@@ -84,9 +84,9 @@ export class CircleService {
           where: { circleId, status: MembershipStatus.ACTIVE },
         });
 
-        if (circle.filledSlots !== actualMemberCount) {
+        if (c.filledSlots !== actualMemberCount) {
           throw new BadRequestException(
-            `Data integrity error: Circle claims ${circle.filledSlots} slots filled, but found ${actualMemberCount} active memberships.`,
+            `Data integrity error: Circle claims ${c.filledSlots} slots filled, but found ${actualMemberCount} active memberships.`,
           );
         }
 
@@ -119,6 +119,53 @@ export class CircleService {
         return updated;
       },
       { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
+    );
+
+    // Notify all active members that the circle has started (non-blocking)
+    this.notifyCircleStarted(circleId, circle.name, initialContributionDeadline, circle.contributionAmount).catch(
+      (err) => console.error(`Failed to send circle-started notifications for ${circleId}`, err),
+    );
+
+    return circle;
+  }
+
+  private async notifyCircleStarted(
+    circleId: string,
+    circleName: string,
+    firstDeadline: Date,
+    contributionAmount: bigint,
+  ) {
+    const members = await this.prisma.roscaMembership.findMany({
+      where: { circleId, status: MembershipStatus.ACTIVE },
+      select: {
+        payoutPosition: true,
+        user: { select: { id: true, firstName: true, lastName: true, email: true } },
+      },
+    });
+
+    const deadlineFormatted = new Intl.DateTimeFormat('en-NG', {
+      dateStyle: 'full',
+      timeStyle: 'short',
+      timeZone: 'Africa/Lagos',
+    }).format(firstDeadline);
+
+    const amountNaira = (Number(contributionAmount) / 100).toLocaleString('en-NG', {
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 2,
+    });
+
+    await Promise.allSettled(
+      members.map((m) =>
+        this.notifications.sendCircleStartedNotification(
+          m.user.id,
+          m.user.email,
+          `${m.user.firstName} ${m.user.lastName}`,
+          circleName,
+          deadlineFormatted,
+          amountNaira,
+          m.payoutPosition ?? 0,
+        ),
+      ),
     );
   }
 

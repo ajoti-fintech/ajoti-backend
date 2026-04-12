@@ -264,22 +264,23 @@ export class MembershipService {
     });
 
     const { user } = membership.membership;
+    const fullName = `${user.firstName} ${user.lastName}`;
+
+    // Approval notification (what it means for the member)
     this.notifications
-      .sendPayoutPositionNotification(
-        userId,
-        user.email,
-        `${user.firstName} ${user.lastName}`,
-        membership.circleName,
-        membership.newPosition,
-        false,
-      )
+      .sendMemberApprovedNotification(userId, user.email, fullName, membership.circleName, membership.newPosition)
+      .catch((err) => console.error('Failed to send member approved notification', err));
+
+    // Payout position assignment (the specific slot detail)
+    this.notifications
+      .sendPayoutPositionNotification(userId, user.email, fullName, membership.circleName, membership.newPosition, false)
       .catch((err) => console.error('Failed to send payout position notification', err));
 
     return membership.membership;
   }
 
   async rejectMember(circleId: string, adminId: string, userId: string) {
-    return await this.prisma.$transaction(
+    const result = await this.prisma.$transaction(
       async (tx) => {
         const circle = await tx.roscaCircle.findUnique({ where: { id: circleId } });
         if (!circle) throw new NotFoundException('Circle not found');
@@ -289,6 +290,7 @@ export class MembershipService {
 
         const membership = await tx.roscaMembership.findUnique({
           where: { circleId_userId: { circleId, userId } },
+          include: { user: { select: { firstName: true, lastName: true, email: true } } },
         });
         if (!membership) throw new NotFoundException('Membership not found');
         if (membership.status !== MembershipStatus.PENDING) {
@@ -316,12 +318,26 @@ export class MembershipService {
           );
         }
 
-        return await tx.roscaMembership.update({
+        const updated = await tx.roscaMembership.update({
           where: { circleId_userId: { circleId, userId } },
           data: { status: MembershipStatus.REJECTED },
         });
+
+        return { membership: updated, user: membership.user, circleName: circle.name };
       },
       { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
     );
+
+    // Fire rejection notification after transaction commits
+    this.notifications
+      .sendMemberRejectedNotification(
+        userId,
+        result.user.email,
+        `${result.user.firstName} ${result.user.lastName}`,
+        result.circleName,
+      )
+      .catch((err) => console.error('Failed to send member rejected notification', err));
+
+    return result.membership;
   }
 }

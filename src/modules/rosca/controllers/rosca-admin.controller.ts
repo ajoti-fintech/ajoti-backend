@@ -201,6 +201,26 @@ export class RoscaAdminController {
     };
   }
 
+  @Post(':circleId/notify-top-up')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: '[Admin] Notify active members whose wallet balance is below the contribution amount',
+    description:
+      'Checks every active member\'s available balance against the circle\'s contribution amount. ' +
+      'Sends an email + in-app notification only to those who are below the threshold.',
+  })
+  async notifyLowBalance(
+    @Param('circleId') circleId: string,
+    @CurrentUser('userId') adminId: string,
+  ) {
+    const data = await this.adminOversightService.notifyLowBalanceMembers(circleId, adminId);
+    return {
+      success: true,
+      message: `Notified ${data.notified} of ${data.total} member(s) with insufficient balance`,
+      data,
+    };
+  }
+
   @Post(':circleId/invites')
   @HttpCode(HttpStatus.CREATED)
   @ApiOperation({ summary: '[Admin] Send an invite to a person to join a private circle' })
