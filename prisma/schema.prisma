@@ -299,6 +299,7 @@ model RoscaCircle {
   loans         Loan[]
   debts         MissedContributionDebt[]
   invites       RoscaInvite[]
+  peerReviews   PeerReview[]
 
   @@map("rosca_circles")
 }
@@ -743,6 +744,8 @@ model User {
   creditScore         CreditScore?
   loans               Loan[]
   missedDebts         MissedContributionDebt[]
+  reviewsGiven        PeerReview[]            @relation("ReviewsGiven")
+  reviewsReceived     PeerReview[]            @relation("ReviewsReceived")
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -918,4 +921,29 @@ model MailOutbox {
   updatedAt DateTime @updatedAt
 
   @@index([status, attempts])
+}
+
+// ── PEER REVIEWS ──────────────────────────────────────────────────────────
+// Submitted at end of a completed circle. One review per reviewer per reviewee.
+// Member ratings update ATI trust score; admin ratings are internal feedback only.
+
+model PeerReview {
+  id         String      @id @default(uuid())
+  circleId   String      @map("circle_id")
+  circle     RoscaCircle @relation(fields: [circleId], references: [id])
+
+  reviewerId String @map("reviewer_id")
+  reviewer   User   @relation("ReviewsGiven", fields: [reviewerId], references: [id])
+
+  revieweeId String @map("reviewee_id")
+  reviewee   User   @relation("ReviewsReceived", fields: [revieweeId], references: [id])
+
+  rating  Int     // 1–5, integer only
+  comment String? @db.VarChar(280)
+
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@unique([circleId, reviewerId, revieweeId])
+  @@index([circleId, revieweeId])
+  @@map("peer_reviews")
 }
