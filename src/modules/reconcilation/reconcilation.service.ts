@@ -49,14 +49,9 @@ export class ReconciliationService {
         // 2. BUCKET INTEGRITY CHECK
         // Verify that the sum of reserved amounts in the Bucket table
         // matches the net sum of RESERVE/RELEASE entries in the Ledger.
-        const bucketAggregates = await tx.ledgerEntry.groupBy({
-          by: ['entryType'],
-          where: { walletId },
-          _sum: { amount: true },
-        });
-
+        // Reuse the same aggregates from Step 1 — they include all entry types.
         let ledgerReserved = 0n;
-        for (const group of bucketAggregates) {
+        for (const group of aggregates) {
           if (group.entryType === EntryType.RESERVE) {
             ledgerReserved += group._sum.amount ?? 0n;
           } else if (group.entryType === EntryType.RELEASE) {
