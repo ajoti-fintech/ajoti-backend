@@ -10,6 +10,7 @@ import { passwordChangedTemplate } from '../mail/templates/password-change';
 import { kycStatusTemplate } from '../mail/templates/kyc-status';
 import { transactionTemplate } from '../mail/templates/transaction';
 import { payoutPositionTemplate } from '../mail/templates/payout-position';
+import { contributionReminderTemplate } from '../mail/templates/contribution-reminder';
 import { NotificationGateway } from './notification-gateway';
 
 interface CreateNotificationParams {
@@ -276,6 +277,37 @@ export class NotificationService {
       data: { isRead: true, readAt: new Date() },
     });
     return { message: 'All notifications marked as read' };
+  }
+
+  // ── Contribution Reminder ────────────────────────────────────────────────
+
+  async sendContributionReminder(
+    userId: string,
+    email: string,
+    fullName: string,
+    circleName: string,
+    cycleNumber: number,
+    contributionAmount: string,
+    deadline: string,
+  ) {
+    const title = `Contribution reminder — ${circleName} cycle ${cycleNumber}`;
+    const body = `You have not yet contributed for cycle ${cycleNumber} in ${circleName}. Deadline: ${deadline}.`;
+
+    // In-app
+    this.createInAppNotification(userId, title, body).catch((err) =>
+      this.logger.error(`Failed in-app reminder for ${userId}`, err?.stack),
+    );
+
+    // Email
+    const record = await this.createRecord({ userId, type: NotificationType.EMAIL, title, body });
+    try {
+      const html = contributionReminderTemplate(fullName, circleName, cycleNumber, contributionAmount, deadline);
+      await this.mail.send(email, title, html);
+      await this.markSent(record.id);
+    } catch (error) {
+      this.logger.error(`Failed to send contribution reminder email to ${email}`, error?.stack);
+      await this.markFailed(record.id, error?.message);
+    }
   }
 
   // ── Payout Position Notification ──────────────────────────────────────────

@@ -1069,6 +1069,7 @@ export class RoscaService {
       where: { id: circleId },
       select: {
         adminId: true,
+        name: true,
         currentCycle: true,
         durationCycles: true,
         contributionAmount: true,
@@ -1222,35 +1223,56 @@ export class RoscaService {
     const circle = await this.assertAdminOwnsCircle(circleId, adminId);
     const cycleNumber = round ?? circle.currentCycle;
 
-    const [members, contributed] = await Promise.all([
+    const [members, contributed, schedule] = await Promise.all([
       this.prisma.roscaMembership.findMany({
         where: { circleId, status: MembershipStatus.ACTIVE },
-        select: { userId: true },
+        select: {
+          userId: true,
+          user: { select: { firstName: true, lastName: true, email: true } },
+        },
       }),
       this.prisma.roscaContribution.findMany({
         where: { circleId, cycleNumber },
         select: { userId: true },
       }),
+      this.prisma.roscaCycleSchedule.findFirst({
+        where: { circleId, cycleNumber, obsoletedAt: null },
+        select: { contributionDeadline: true },
+      }),
     ]);
 
     const contributedIds = new Set(contributed.map((c) => c.userId));
-    const missingUserIds = members.map((m) => m.userId).filter((id) => !contributedIds.has(id));
+    const missing = members.filter((m) => !contributedIds.has(m.userId));
 
-    if (missingUserIds.length === 0) {
+    if (missing.length === 0) {
       return { notified: 0, cycleNumber, message: 'All members have contributed for this cycle' };
     }
 
+    const amountNaira = (Number(circle.contributionAmount) / 100).toLocaleString('en-NG', {
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 2,
+    });
+    const deadline = schedule?.contributionDeadline
+      ? new Intl.DateTimeFormat('en-NG', { dateStyle: 'full', timeStyle: 'short', timeZone: 'Africa/Lagos' }).format(
+          schedule.contributionDeadline,
+        )
+      : 'soon';
+
     await Promise.allSettled(
-      missingUserIds.map((userId) =>
-        this.notifications.createInAppNotification(
-          userId,
-          'Contribution Reminder',
-          `You have not yet contributed for cycle ${cycleNumber}. Please contribute before the deadline to avoid a late penalty.`,
+      missing.map((m) =>
+        this.notifications.sendContributionReminder(
+          m.userId,
+          m.user.email,
+          `${m.user.firstName} ${m.user.lastName}`,
+          circle.name,
+          cycleNumber,
+          amountNaira,
+          deadline,
         ),
       ),
     );
 
-    return { notified: missingUserIds.length, cycleNumber };
+    return { notified: missing.length, cycleNumber };
   }
 
   // =========================================================================
