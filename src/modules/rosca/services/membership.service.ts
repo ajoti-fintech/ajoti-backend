@@ -209,6 +209,26 @@ export class MembershipService {
     });
   }
 
+  async getMyRejectedRequests(userId: string) {
+    return await this.prisma.roscaMembership.findMany({
+      where: { userId, status: MembershipStatus.REJECTED },
+      include: {
+        circle: {
+          select: {
+            id: true,
+            name: true,
+            contributionAmount: true,
+            frequency: true,
+            maxSlots: true,
+            filledSlots: true,
+            status: true,
+          },
+        },
+      },
+      orderBy: { joinedAt: 'desc' },
+    });
+  }
+
   // =========================================================================
   // ADMIN: APPROVE / REJECT
   // =========================================================================

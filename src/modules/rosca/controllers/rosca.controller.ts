@@ -89,7 +89,13 @@ export class RoscaController {
 
   @Get('my-participations')
   @HttpCode(HttpStatus.OK)
-  @ApiOperation({ summary: 'Get all ROSCA circles the current user is a member of' })
+  @ApiOperation({
+    summary: 'Get all ROSCA circles the current user has been accepted into',
+    description:
+      'Returns circles where the user is an ACTIVE or COMPLETED member. ' +
+      'Each circle includes the full member list with payout positions and trust scores. ' +
+      'For the full circle detail (schedules, pot size, etc.) call GET /rosca/:circleId.',
+  })
   @ApiResponse({ status: 200, type: [RoscaCircleResponseDto] })
   async getMyParticipations(@CurrentUser('userId') userId: string) {
     const circles = await this.circleService.getUserParticipations(userId);
@@ -97,6 +103,34 @@ export class RoscaController {
       success: true,
       message: 'Your active participations retrieved successfully',
       data: circles.map(formatCircleResponse),
+    };
+  }
+
+  @Get('my-rejections')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'Get all ROSCA circles where the current user was rejected',
+    description: 'Returns membership records (REJECTED status) with basic circle details.',
+  })
+  async getMyRejections(@CurrentUser('userId') userId: string) {
+    const memberships = await this.membershipService.getMyRejectedRequests(userId);
+    return {
+      success: true,
+      message: 'Rejected join requests retrieved successfully',
+      data: memberships.map((m) => ({
+        membershipId: m.id,
+        circleId: m.circleId,
+        requestedAt: m.joinedAt,
+        circle: {
+          id: m.circle.id,
+          name: m.circle.name,
+          contributionAmount: m.circle.contributionAmount.toString(),
+          frequency: m.circle.frequency,
+          maxSlots: m.circle.maxSlots,
+          filledSlots: m.circle.filledSlots,
+          status: m.circle.status,
+        },
+      })),
     };
   }
 

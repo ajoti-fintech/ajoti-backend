@@ -360,9 +360,26 @@ export class CircleService {
 
   async getUserParticipations(userId: string) {
     return await this.prisma.roscaCircle.findMany({
-      where: { memberships: { some: { userId } } },
+      where: {
+        memberships: {
+          some: { userId, status: { in: [MembershipStatus.ACTIVE, MembershipStatus.COMPLETED] } },
+        },
+      },
       include: {
-        admin: { select: { firstName: true, lastName: true } },
+        admin: { select: { firstName: true, lastName: true, email: true } },
+        memberships: {
+          where: { status: { in: [MembershipStatus.ACTIVE, MembershipStatus.COMPLETED] } },
+          include: {
+            user: {
+              select: {
+                firstName: true,
+                lastName: true,
+                userTrustStats: { select: { trustScore: true } },
+              },
+            },
+          },
+          orderBy: { payoutPosition: 'asc' },
+        },
         _count: { select: { memberships: true } },
       },
       orderBy: { updatedAt: 'desc' },
