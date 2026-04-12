@@ -378,6 +378,7 @@ export class RoscaService {
           select: { firstName: true, lastName: true, email: true },
         },
         memberships: {
+          where: { status: { in: [MembershipStatus.ACTIVE, MembershipStatus.COMPLETED] } },
           include: {
             user: {
               select: {
@@ -600,6 +601,7 @@ export class RoscaService {
           select: { firstName: true, lastName: true, email: true },
         },
         memberships: {
+          where: { status: { in: [MembershipStatus.ACTIVE, MembershipStatus.COMPLETED] } },
           include: {
             user: {
               select: { firstName: true, lastName: true },
