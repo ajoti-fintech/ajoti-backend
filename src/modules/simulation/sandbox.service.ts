@@ -250,7 +250,7 @@ export class SandboxService {
         id: e.id,
         entryType: e.entryType,
         movementType: e.movementType,
-        bucketType: e.bucketType,
+        bucketType: e.bucketType ?? 'MAIN',
         amount: e.amount.toString(),
         balanceBefore: e.balanceBefore.toString(),
         balanceAfter: e.balanceAfter.toString(),
@@ -387,7 +387,7 @@ export class SandboxService {
 
     // Find circles owned by sim users
     const circles = await this.prisma.roscaCircle.findMany({
-      where: { createdById: { in: userIds } },
+      where: { adminId: { in: userIds } },
       select: { id: true },
     });
     const circleIds = circles.map((c) => c.id);
