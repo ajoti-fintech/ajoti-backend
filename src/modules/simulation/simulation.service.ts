@@ -83,11 +83,15 @@ export class SimulationService {
     const circleIds: string[] = [];
 
     try {
-      const [circleA, circleB, circleC] = await Promise.all([
-        this.runCircleA(runId, circleIds),
-        this.runCircleB(runId, circleIds),
-        this.runCircleC(runId, circleIds),
-      ]);
+      // Run sequentially — parallel execution causes deadlocks on the shared
+      // PLATFORM_POOL wallet (Serializable transactions) and on userTrustStats
+      // writes. Running in parallel also means Promise.all rejects on the first
+      // failure and immediately enters the finally block while the other circles
+      // are still executing in the background, leading to FK violations during
+      // cleanup.
+      const circleA = await this.runCircleA(runId, circleIds);
+      const circleB = await this.runCircleB(runId, circleIds);
+      const circleC = await this.runCircleC(runId, circleIds);
 
       return { runId, circleA, circleB, circleC };
     } finally {
