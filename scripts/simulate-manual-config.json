@@ -1,0 +1,76 @@
+{
+  "_comment": "Manual ROSCA simulation config. Run: npx ts-node -r tsconfig-paths/register scripts/simulate-manual.ts [path/to/config.json]",
+  "circleName": "Manual Sim Circle",
+  "contributionAmountKobo": 100000,
+  "maxSlots": 4,
+  "frequency": "WEEKLY",
+  "payoutLogic": "ADMIN_ASSIGNED",
+  "members": [
+    { "label": "Alice", "payoutPosition": 1 },
+    { "label": "Bob",   "payoutPosition": 2 },
+    { "label": "Carol", "payoutPosition": 3 },
+    { "label": "Dave",  "payoutPosition": 4 }
+  ],
+  "cycles": [
+    {
+      "cycleNumber": 1,
+      "contributions": [
+        { "member": "Alice", "timing": "on_time" },
+        { "member": "Bob",   "timing": "on_time" },
+        { "member": "Carol", "timing": "on_time" },
+        { "member": "Dave",  "timing": "on_time" }
+      ],
+      "extraTrustEvents": []
+    },
+    {
+      "cycleNumber": 2,
+      "contributions": [
+        { "member": "Alice", "timing": "on_time" },
+        { "member": "Bob",   "timing": "late" },
+        { "member": "Carol", "timing": "on_time" },
+        { "member": "Dave",  "timing": "missed" }
+      ],
+      "extraTrustEvents": []
+    },
+    {
+      "cycleNumber": 3,
+      "contributions": [
+        { "member": "Alice", "timing": "on_time" },
+        { "member": "Bob",   "timing": "on_time" },
+        { "member": "Carol", "timing": "missed" },
+        { "member": "Dave",  "timing": "missed" }
+      ],
+      "extraTrustEvents": [
+        {
+          "member": "Dave",
+          "event": "missed_payment_post_payout_default",
+          "note": "Dave received payout in cycle 1 then missed cycle 3"
+        }
+      ]
+    },
+    {
+      "cycleNumber": 4,
+      "contributions": [
+        { "member": "Alice", "timing": "on_time" },
+        { "member": "Bob",   "timing": "on_time" },
+        { "member": "Carol", "timing": "on_time" },
+        { "member": "Dave",  "timing": "missed" }
+      ],
+      "extraTrustEvents": []
+    }
+  ],
+  "peerReviews": [
+    { "reviewer": "Alice", "reviewee": "Bob",   "rating": 4, "comment": "Paid a bit late once but reliable overall" },
+    { "reviewer": "Alice", "reviewee": "Carol",  "rating": 3, "comment": "Missed a cycle" },
+    { "reviewer": "Alice", "reviewee": "Dave",   "rating": 1, "comment": "Defaulted multiple times" },
+    { "reviewer": "Bob",   "reviewee": "Alice",  "rating": 5 },
+    { "reviewer": "Bob",   "reviewee": "Carol",  "rating": 3 },
+    { "reviewer": "Bob",   "reviewee": "Dave",   "rating": 1 },
+    { "reviewer": "Carol", "reviewee": "Alice",  "rating": 5 },
+    { "reviewer": "Carol", "reviewee": "Bob",    "rating": 4 },
+    { "reviewer": "Carol", "reviewee": "Dave",   "rating": 1 },
+    { "reviewer": "Dave",  "reviewee": "Alice",  "rating": 5 },
+    { "reviewer": "Dave",  "reviewee": "Bob",    "rating": 4 },
+    { "reviewer": "Dave",  "reviewee": "Carol",  "rating": 3 }
+  ]
+}

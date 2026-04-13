@@ -10,5 +10,6 @@ import { PeerReviewService } from './peer-review.service';
   imports: [PrismaModule, TrustModule, AuthModule],
   controllers: [PeerReviewController],
   providers: [PeerReviewService],
+  exports: [PeerReviewService],
 })
 export class PeerReviewModule {}

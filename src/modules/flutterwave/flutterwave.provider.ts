@@ -39,8 +39,8 @@ export interface FlwVerifyTransactionResponse {
     id: number;
     tx_ref: string;
     flw_ref: string;
-    amount: number; // Naira
-    charged_amount: number;
+    amount: bigint; // Naira
+    charged_amount: bigint;
     currency: string;
     status: 'successful' | 'failed' | 'pending';
     payment_type?: string;
@@ -56,7 +56,7 @@ export interface FlwVerifyTransactionResponse {
 export interface FlwTransferPayload {
   account_bank: string;
   account_number: string;
-  amount: number; // Naira — NOT kobo
+  amount: bigint; // Naira — NOT kobo
   narration: string;
   currency: string;
   reference: string; // Must be unique — use WITHDRAWAL-{uuid}

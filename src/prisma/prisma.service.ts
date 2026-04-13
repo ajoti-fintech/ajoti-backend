@@ -14,8 +14,8 @@ export class PrismaService extends PrismaClient implements OnModuleInit, OnModul
   private readonly logger = new Logger(PrismaService.name);
   private readonly pool: Pool;
 
-  constructor() {
-    const connectionString = process.env.DATABASE_URL;
+  constructor(connectionStringOverride?: string) {
+    const connectionString = connectionStringOverride ?? process.env.DATABASE_URL;
 
     if (!connectionString) {
       throw new Error('DATABASE_URL is not set');
