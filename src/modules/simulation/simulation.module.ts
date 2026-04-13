@@ -34,6 +34,7 @@ import { CreditModule } from '../credit/credit.module';
 import { SimPrismaService } from './sim-prisma.service';
 import { SimNotificationService } from './sim-notification.service';
 import { SimulationService } from './simulation.service';
+import { SandboxService } from './sandbox.service';
 import { SimulationController } from './simulation.controller';
 
 @Module({
@@ -70,6 +71,7 @@ import { SimulationController } from './simulation.controller';
     { provide: NotificationService, useClass: SimNotificationService },
 
     SimulationService,
+    SandboxService,
   ],
   controllers: [SimulationController],
 })
