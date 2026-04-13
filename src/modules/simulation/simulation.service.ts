@@ -122,12 +122,12 @@ export class SimulationService {
     const tracker = new ResultTracker();
 
     const adminA = await this.createSimUser(runId, 'AdminA', Role.ADMIN);
-    const [a1, a2, a3, a4] = await Promise.all([
-      this.createSimUser(runId, 'A1'),
-      this.createSimUser(runId, 'A2'),
-      this.createSimUser(runId, 'A3'),
-      this.createSimUser(runId, 'A4'),
-    ]);
+    // Sequential — parallel Serializable ledger transactions on the same table
+    // trigger SSI false-positive write-conflict errors in PostgreSQL.
+    const a1 = await this.createSimUser(runId, 'A1');
+    const a2 = await this.createSimUser(runId, 'A2');
+    const a3 = await this.createSimUser(runId, 'A3');
+    const a4 = await this.createSimUser(runId, 'A4');
     const members = [a1, a2, a3, a4];
 
     const circleA = await this.circle.createCircle(adminA.id, {
@@ -184,12 +184,10 @@ export class SimulationService {
     const tracker = new ResultTracker();
 
     const adminB = await this.createSimUser(runId, 'AdminB', Role.ADMIN);
-    const [b1, b2, b3, b4] = await Promise.all([
-      this.createSimUser(runId, 'B1'),
-      this.createSimUser(runId, 'B2'),
-      this.createSimUser(runId, 'B3'),
-      this.createSimUser(runId, 'B4'),
-    ]);
+    const b1 = await this.createSimUser(runId, 'B1');
+    const b2 = await this.createSimUser(runId, 'B2');
+    const b3 = await this.createSimUser(runId, 'B3');
+    const b4 = await this.createSimUser(runId, 'B4');
     const members = [b1, b2, b3, b4];
 
     const circleB = await this.circle.createCircle(adminB.id, {
@@ -264,12 +262,10 @@ export class SimulationService {
     const tracker = new ResultTracker();
 
     const adminC = await this.createSimUser(runId, 'AdminC', Role.ADMIN);
-    const [c1, c2, c3, c4] = await Promise.all([
-      this.createSimUser(runId, 'C1'),
-      this.createSimUser(runId, 'C2'),
-      this.createSimUser(runId, 'C3'),
-      this.createSimUser(runId, 'C4'),
-    ]);
+    const c1 = await this.createSimUser(runId, 'C1');
+    const c2 = await this.createSimUser(runId, 'C2');
+    const c3 = await this.createSimUser(runId, 'C3');
+    const c4 = await this.createSimUser(runId, 'C4');
     const members = [c1, c2, c3, c4];
 
     const circleC = await this.circle.createCircle(adminC.id, {
