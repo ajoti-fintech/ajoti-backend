@@ -31,9 +31,8 @@ import { TrustModule } from '../trust/trust.module';
 import { PayoutModule } from '../payout/payout.module';
 import { LoanModule } from '../loans/loans.module';
 import { CreditModule } from '../credit/credit.module';
-import { NotificationModule } from '../notification/notification.module';
-import { MailModule } from '../mail/mail.module';
 import { SimPrismaService } from './sim-prisma.service';
+import { SimNotificationService } from './sim-notification.service';
 import { SimulationService } from './simulation.service';
 import { SimulationController } from './simulation.controller';
 
@@ -46,9 +45,6 @@ import { SimulationController } from './simulation.controller';
     PayoutModule,
     LoanModule,
     CreditModule,
-    NotificationModule,
-    // MailModule exports MailService, which NotificationService (re-provided below) requires.
-    MailModule,
     // Register the auth-events queue in this module's scope so that
     // PayoutService (re-provided below) can inject it via @InjectQueue.
     BullModule.registerQueue({ name: AUTH_EVENTS_QUEUE }),
@@ -70,7 +66,8 @@ import { SimulationController } from './simulation.controller';
     CreditService,
     ExternalCreditService,
     PeerReviewService,
-    NotificationService,
+    // No-op: suppresses emails and DB writes for sim users.
+    { provide: NotificationService, useClass: SimNotificationService },
 
     SimulationService,
   ],
