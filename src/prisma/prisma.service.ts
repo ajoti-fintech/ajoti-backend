@@ -4,6 +4,7 @@ import {
   OnModuleDestroy,
   Logger,
   INestApplication,
+  Optional,
 } from '@nestjs/common';
 import { PrismaPg } from '@prisma/adapter-pg';
 import { PrismaClient } from '@prisma/client';
@@ -14,7 +15,7 @@ export class PrismaService extends PrismaClient implements OnModuleInit, OnModul
   private readonly logger = new Logger(PrismaService.name);
   private readonly pool: Pool;
 
-  constructor(connectionStringOverride?: string) {
+  constructor(@Optional() connectionStringOverride?: string) {
     const connectionString = connectionStringOverride ?? process.env.DATABASE_URL;
 
     if (!connectionString) {
