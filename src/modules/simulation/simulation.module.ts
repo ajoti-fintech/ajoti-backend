@@ -12,8 +12,10 @@
  *   npm run prisma:sim:migrate
  */
 import { Module } from '@nestjs/common';
+import { BullModule } from '@nestjs/bullmq';
 import { PrismaService } from '@/prisma/prisma.service';
 import { AuthModule } from '../auth/auth.module';
+import { AUTH_EVENTS_QUEUE } from '../auth/auth.events';
 import { LedgerService } from '../ledger/ledger.service';
 import { TrustService } from '../trust/trust.service';
 import { CircleService } from '../rosca/services/circle.service';
@@ -30,6 +32,7 @@ import { PayoutModule } from '../payout/payout.module';
 import { LoanModule } from '../loans/loans.module';
 import { CreditModule } from '../credit/credit.module';
 import { NotificationModule } from '../notification/notification.module';
+import { MailModule } from '../mail/mail.module';
 import { SimPrismaService } from './sim-prisma.service';
 import { SimulationService } from './simulation.service';
 import { SimulationController } from './simulation.controller';
@@ -44,6 +47,11 @@ import { SimulationController } from './simulation.controller';
     LoanModule,
     CreditModule,
     NotificationModule,
+    // MailModule exports MailService, which NotificationService (re-provided below) requires.
+    MailModule,
+    // Register the auth-events queue in this module's scope so that
+    // PayoutService (re-provided below) can inject it via @InjectQueue.
+    BullModule.registerQueue({ name: AUTH_EVENTS_QUEUE }),
   ],
   providers: [
     // SimPrismaService connects to SIM_NEON_DB_URL.

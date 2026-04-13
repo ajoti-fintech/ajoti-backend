@@ -25,6 +25,6 @@ import { ConfigModule, ConfigService } from '@nestjs/config';
   ],
   providers: [NotificationService, NotificationGateway, NotificationProcessor],
   controllers: [NotificationController],
-  exports: [NotificationService],
+  exports: [NotificationService, NotificationGateway],
 })
 export class NotificationModule {}
