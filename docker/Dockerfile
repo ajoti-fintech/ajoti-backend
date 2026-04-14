@@ -40,4 +40,8 @@ COPY --from=builder /app/prisma ./prisma
 COPY --from=builder /app/prisma.config.ts ./
 
 EXPOSE 3000
-CMD ["sh", "-c", "node_modules/.bin/prisma migrate deploy && node dist/src/main.js"]
+# DIRECT_URL is the non-pooled Neon connection string (set in Render env vars).
+# Prisma advisory locks required for migrate deploy fail on pooled connections,
+# so we override DATABASE_URL with DIRECT_URL only for the migration step.
+# The running app then uses the pooled DATABASE_URL for all queries.
+CMD ["sh", "-c", "DATABASE_URL=${DIRECT_URL:-$DATABASE_URL} node_modules/.bin/prisma migrate deploy && node dist/src/main.js"]
