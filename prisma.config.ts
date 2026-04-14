@@ -11,5 +11,10 @@ export default defineConfig({
   },
   datasource: {
     url: env('DATABASE_URL'),
+    // DIRECT_URL must point to the non-pooled Neon connection string.
+    // Prisma uses this for migrations (advisory locks) while runtime queries
+    // use the pooled DATABASE_URL. Without this, prisma migrate deploy fails
+    // on Neon with P1002 (advisory lock timeout).
+    directUrl: env('DIRECT_URL'),
   },
 });

@@ -201,7 +201,9 @@ export class FlutterwaveProvider {
   readonly isMockMode: boolean;
 
   /** FLW's sandbox BVN — accepted for virtual account creation in test mode */
-  readonly testBvn = '00000000000';
+  // 22222222280
+  // 22123456789
+  readonly testBvn = '22222222222';
 
   private readonly webhookHash: string;
   private readonly bypassWebhookVerification: boolean;
