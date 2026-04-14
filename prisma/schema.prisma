@@ -714,18 +714,27 @@ enum Gender {
   FEMALE
 }
 
+enum UserStatus {
+  ACTIVE
+  SUSPENDED // Temporarily blocked — can be lifted
+  BANNED    // Permanent — cannot register or transact
+}
+
 model User {
-  id           String  @id @default(uuid())
-  email        String  @unique
-  pendingEmail String? @unique
+  id           String     @id @default(uuid())
+  email        String     @unique
+  pendingEmail String?    @unique
   firstName    String
-  lastName   String
-  password   String
-  dob        DateTime @default(now())
-  gender     Gender
-  phone      String
-  role       Role    @default(MEMBER)
-  isVerified Boolean @default(false)
+  lastName     String
+  password     String
+  dob          DateTime   @default(now())
+  gender       Gender
+  phone        String
+  role         Role       @default(MEMBER)
+  isVerified   Boolean    @default(false)
+  status       UserStatus @default(ACTIVE)
+  suspendedAt     DateTime? @map("suspended_at")
+  suspensionReason String?  @map("suspension_reason")
 
   // Relations
   wallet         Wallet?

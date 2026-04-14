@@ -30,6 +30,7 @@ import { CreditModule } from './modules/credit/credit.module';
 import { LoanModule } from './modules/loans/loans.module';
 import { PeerReviewModule } from './modules/peer-review/peer-review.module';
 import { SimulationModule } from './modules/simulation/simulation.module';
+import { SuperadminModule } from './modules/superadmin/superadmin.module';
 import redisConfig from './config/redis.config';
 import { BullModule } from '@nestjs/bullmq';
 import { ThrottlerStorageRedisService } from 'nestjs-throttler-storage-redis';
@@ -102,6 +103,7 @@ const ENV = process.env.NODE_ENV || 'development';
     LoanModule,
     PeerReviewModule,
     SimulationModule,
+    SuperadminModule,
   ],
   providers: [
     AppService,
