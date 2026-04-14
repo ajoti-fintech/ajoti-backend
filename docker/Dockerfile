@@ -17,6 +17,7 @@ COPY . .
 # prisma generate only reads schema.prisma — never connects to the DB.
 # Placeholder satisfies prisma.config.ts env() call at load time.
 ENV DATABASE_URL=postgresql://placeholder:5432/placeholder
+ENV DIRECT_URL=postgresql://placeholder:5432/placeholder
 RUN pnpm prisma generate
 RUN pnpm run build
 
