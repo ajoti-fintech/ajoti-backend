@@ -99,6 +99,7 @@ enum LedgerSourceType {
   REVERSAL             // Compensating entry for failure
   SYSTEM               // Automated internal jobs
   LOAN                 // Loan disbursement advance
+  PLATFORM_FEE         // 2% company fee deducted from non-loan payouts
 }
 
 enum BucketType {
