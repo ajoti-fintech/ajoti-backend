@@ -6,6 +6,7 @@ import {
     IsOptional,
     Length,
     Matches,
+    IsNumberString,
 } from 'class-validator';
 
 export class InitializeWithdrawalDto {
@@ -45,6 +46,11 @@ export class InitializeWithdrawalDto {
     @IsOptional()
     @IsString()
     narration?: string;
+
+    /** 4-digit transaction PIN */
+    @IsNumberString()
+    @Length(4, 4)
+    transactionPin: string;
 }
 
 export class WithdrawalResponseDto {

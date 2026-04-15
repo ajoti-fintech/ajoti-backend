@@ -726,15 +726,16 @@ model User {
   pendingEmail String?    @unique
   firstName    String
   lastName     String
-  password     String
-  dob          DateTime   @default(now())
-  gender       Gender
-  phone        String
-  role         Role       @default(MEMBER)
-  isVerified   Boolean    @default(false)
-  status       UserStatus @default(ACTIVE)
-  suspendedAt     DateTime? @map("suspended_at")
-  suspensionReason String?  @map("suspension_reason")
+  password        String
+  transactionPin  String?   @map("transaction_pin")
+  dob             DateTime  @default(now())
+  gender          Gender
+  phone           String
+  role            Role      @default(MEMBER)
+  isVerified      Boolean   @default(false)
+  status          UserStatus @default(ACTIVE)
+  suspendedAt     DateTime?  @map("suspended_at")
+  suspensionReason String?   @map("suspension_reason")
 
   // Relations
   wallet         Wallet?

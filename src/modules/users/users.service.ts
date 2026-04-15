@@ -612,4 +612,42 @@ export class UsersService {
       throw new ConflictException('Wallet balance must be exactly zero.');
     }
   }
+
+  // ── Transaction PIN ──────────────────────────────────────────────────────────
+
+  async setTransactionPin(userId: string, pin: string, currentPin?: string) {
+    const user = await this.prisma.user.findUnique({
+      where: { id: userId },
+      select: { transactionPin: true },
+    });
+
+    if (!user) throw new NotFoundException('User not found');
+
+    // If a PIN is already set, require the current PIN to change it
+    if (user.transactionPin) {
+      if (!currentPin) {
+        throw new BadRequestException('Current PIN is required to change your transaction PIN');
+      }
+      const valid = await verifyHash(currentPin, user.transactionPin);
+      if (!valid) {
+        throw new BadRequestException('Current PIN is incorrect');
+      }
+    }
+
+    const pinHash = await hashValue(pin);
+    await this.prisma.user.update({
+      where: { id: userId },
+      data: { transactionPin: pinHash },
+    });
+
+    return { message: user.transactionPin ? 'Transaction PIN updated successfully' : 'Transaction PIN set successfully' };
+  }
+
+  async hasPinSet(userId: string): Promise<boolean> {
+    const user = await this.prisma.user.findUnique({
+      where: { id: userId },
+      select: { transactionPin: true },
+    });
+    return Boolean(user?.transactionPin);
+  }
 }

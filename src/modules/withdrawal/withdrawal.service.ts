@@ -3,7 +3,9 @@ import {
     Logger,
     BadRequestException,
     InternalServerErrorException,
+    UnauthorizedException,
 } from '@nestjs/common';
+import { verifyHash } from '@/common';
 import { FlutterwaveProvider } from '../flutterwave/flutterwave.provider';
 import {
     EntryType,
@@ -57,6 +59,21 @@ export class WithdrawalService {
         // Min withdrawal: 100 NGN (10000 kobo)
         if (amountKobo < 10000n) {
             throw new BadRequestException('Minimum withdrawal amount is NGN 100');
+        }
+
+        // Verify transaction PIN
+        const user = await this.prisma.user.findUnique({
+            where: { id: userId },
+            select: { transactionPin: true },
+        });
+
+        if (!user?.transactionPin) {
+            throw new BadRequestException('Transaction PIN not set. Please set a PIN in your profile settings before withdrawing.');
+        }
+
+        const pinValid = await verifyHash(dto.transactionPin, user.transactionPin);
+        if (!pinValid) {
+            throw new UnauthorizedException('Incorrect transaction PIN');
         }
 
         // Find wallet
