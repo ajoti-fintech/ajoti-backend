@@ -278,7 +278,28 @@ export class KycController {
     return this.kycService.submitProofOfAddress(userId, dto, doc);
   }
 
+  @Post('resubmit')
+  @Throttle({ default: { ttl: 600_000, limit: 5 } }) // 5/10min
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Resubmit KYC after rejection — resets to NOK step keeping NIN/BVN' })
+  @ApiResponse({ status: 200, description: 'KYC reset for resubmission' })
+  @ApiResponse({ status: 400, description: 'KYC not in REJECTED status' })
+  @ApiResponse({ status: 404, description: 'KYC record not found' })
+  async resubmitKyc(@Request() req: AuthRequest): Promise<KycResponseDto> {
+    return this.kycService.resubmitKyc(req.user.userId);
+  }
+
   // SUPERADMIN ENDPOINTS
+  @Get('pending')
+  @Throttle({ default: { ttl: 60_000, limit: 30 } })
+  @UseGuards(RolesGuard)
+  @Roles('SUPERADMIN')
+  @ApiOperation({ summary: 'Super-Admin: List pending KYC submissions' })
+  @ApiResponse({ status: 200, description: 'Pending KYC list retrieved' })
+  async listPendingKyc() {
+    return this.kycService.listPendingKyc();
+  }
+
   @Patch('approve/:userId')
   @Throttle({ default: { ttl: 600_000, limit: 30 } }) // 30/10min
   @UseGuards(RolesGuard)

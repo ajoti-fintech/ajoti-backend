@@ -1,6 +1,7 @@
 import {
   BadRequestException,
   Injectable,
+  Logger,
   NotFoundException,
   UnprocessableEntityException,
 } from '@nestjs/common';
@@ -32,6 +33,8 @@ type PhotoFiles = {
 
 @Injectable()
 export class KycService {
+  private readonly logger = new Logger(KycService.name);
+
   constructor(
     private readonly configService: ConfigService,
     private readonly prisma: PrismaService,
@@ -249,6 +252,12 @@ export class KycService {
       throw new BadRequestException('KYC already submitted');
     }
 
+    // In non-production, auto-approve when the magic test NIN was used
+    const isTestBypass =
+      process.env.NODE_ENV !== 'production' &&
+      !!kycRecord.nin &&
+      this.fieldEncryption.decrypt(kycRecord.nin) === '00000000000';
+
     // Update KYC record
     const updatedKyc = await this.prisma.kYC.update({
       where: { userId },
@@ -257,11 +266,16 @@ export class KycService {
         nextOfKinRelationship,
         nextOfKinPhone,
         step: KYCStep.SUBMITTED,
-        status: KYCStatus.PENDING, // Changed to PENDING for review
+        status: isTestBypass ? KYCStatus.APPROVED : KYCStatus.PENDING,
         submittedAt: new Date(),
+        ...(isTestBypass ? { reviewedAt: new Date(), reviewedBy: 'SYSTEM_TEST_BYPASS' } : {}),
         updatedAt: new Date(),
       },
     });
+
+    if (isTestBypass) {
+      this.logger.warn(`[TEST BYPASS] KYC auto-approved for userId=${userId}`);
+    }
 
     return this.mapToResponseDto(updatedKyc);
   }
@@ -381,6 +395,93 @@ export class KycService {
       data: {
         proofOfAddressUrl,
         proofOfAddressType: verifyProofOfAddressDto.proofOfAddressType,
+        updatedAt: new Date(),
+      },
+    });
+
+    return this.mapToResponseDto(updatedKyc);
+  }
+
+  /**
+   * Superadmin: List all pending KYC submissions
+   */
+  async listPendingKyc(): Promise<
+    Array<{
+      userId: string
+      name: string
+      email: string
+      submittedAt: string | null
+      ninVerifiedAt: string | null
+      bvnVerifiedAt: string | null
+      nokSubmitted: boolean
+    }>
+  > {
+    const records = await this.prisma.kYC.findMany({
+      where: { status: KYCStatus.PENDING, step: KYCStep.SUBMITTED },
+      orderBy: { submittedAt: 'asc' },
+      select: {
+        userId: true,
+        submittedAt: true,
+        ninVerifiedAt: true,
+        bvnVerifiedAt: true,
+        nextOfKinName: true,
+        user: { select: { firstName: true, lastName: true, email: true } },
+      },
+    });
+
+    return records.map((r) => ({
+      userId: r.userId,
+      name: r.user ? `${r.user.firstName} ${r.user.lastName}`.trim() : r.userId,
+      email: r.user?.email ?? '',
+      submittedAt: r.submittedAt?.toISOString() ?? null,
+      ninVerifiedAt: r.ninVerifiedAt?.toISOString() ?? null,
+      bvnVerifiedAt: r.bvnVerifiedAt?.toISOString() ?? null,
+      nokSubmitted: !!r.nextOfKinName,
+    }));
+  }
+
+  /**
+   * User: Resubmit KYC after rejection — resets step to NOK_REQUIRED so the
+   * user can update their NOK, address, photos and proof of address.
+   * NIN and BVN remain verified; only the post-identity steps are cleared.
+   */
+  async resubmitKyc(userId: string): Promise<KycResponseDto> {
+    const kycRecord = await this.prisma.kYC.findUnique({ where: { userId } });
+
+    if (!kycRecord) {
+      throw new NotFoundException('KYC record not found');
+    }
+
+    if (kycRecord.status !== KYCStatus.REJECTED) {
+      throw new BadRequestException(
+        `KYC can only be resubmitted after rejection. Current status: ${kycRecord.status}`,
+      );
+    }
+
+    const updatedKyc = await this.prisma.kYC.update({
+      where: { userId },
+      data: {
+        status: KYCStatus.NOT_SUBMITTED,
+        step: KYCStep.NOK_REQUIRED,
+        // Clear prior submission data so user re-enters it
+        nextOfKinName: null,
+        nextOfKinRelationship: null,
+        nextOfKinPhone: null,
+        address: null,
+        city: null,
+        state: null,
+        lga: null,
+        country: null,
+        selfieUrl: null,
+        governmentIdType: null,
+        governmentIdFrontUrl: null,
+        governmentIdBackUrl: null,
+        proofOfAddressType: null,
+        proofOfAddressUrl: null,
+        submittedAt: null,
+        reviewedAt: null,
+        reviewedBy: null,
+        rejectionReason: null,
         updatedAt: new Date(),
       },
     });
@@ -534,6 +635,7 @@ export class KycService {
       ninVerifiedAt: kyc.ninVerifiedAt ?? undefined,
       bvnVerifiedAt: kyc.bvnVerifiedAt ?? undefined,
       submittedAt: kyc.submittedAt ?? undefined,
+      rejectionReason: kyc.rejectionReason ?? null,
       createdAt: kyc.createdAt,
       updatedAt: kyc.updatedAt,
     };

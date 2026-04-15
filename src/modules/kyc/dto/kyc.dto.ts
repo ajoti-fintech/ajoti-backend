@@ -178,6 +178,7 @@ export class KycResponseDto {
   ninVerifiedAt?: Date;
   bvnVerifiedAt?: Date;
   submittedAt?: Date;
+  rejectionReason?: string | null;
   createdAt: Date;
   updatedAt: Date;
 }
