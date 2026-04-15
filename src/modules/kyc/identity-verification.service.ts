@@ -125,6 +125,35 @@ export class IdentityVerificationService {
     throw lastError;
   }
 
+  // ── Test bypass ─────────────────────────────────────────────────────────────
+  // Magic values only work outside production. In production the same values
+  // hit the real provider and fail, so there is no security hole.
+
+  private static readonly TEST_NIN = '00000000000';
+  private static readonly TEST_BVN = '00000000000';
+
+  private isTestBypassEnabled(): boolean {
+    return process.env.NODE_ENV !== 'production';
+  }
+
+  private buildTestResult(type: 'NIN' | 'BVN', firstName: string, lastName: string): VerificationResult {
+    this.logger.warn(`[TEST BYPASS] ${type} verification skipped — test value used in non-production env`);
+    return {
+      success: true,
+      verified: true,
+      message: `${type} Verification Successful and details match`,
+      data: {
+        firstName,
+        lastName,
+        middleName: '',
+        dateOfBirth: '',
+        phone: '',
+        gender: '',
+      },
+      matchDetails: { firstNameMatch: true, lastNameMatch: true, dobMatch: true },
+    };
+  }
+
   // ── Public API ───────────────────────────────────────────────────────────────
 
   async verifyNin(
@@ -133,6 +162,10 @@ export class IdentityVerificationService {
     lastName: string,
     dob?: string,
   ): Promise<VerificationResult> {
+    if (this.isTestBypassEnabled() && nin === IdentityVerificationService.TEST_NIN) {
+      return this.buildTestResult('NIN', firstName, lastName);
+    }
+
     this.logger.log(`NIN verification request [nin=${nin.slice(0, 4)}****]`);
 
     try {
@@ -192,6 +225,10 @@ export class IdentityVerificationService {
     lastName: string,
     dob: string,
   ): Promise<VerificationResult> {
+    if (this.isTestBypassEnabled() && bvn === IdentityVerificationService.TEST_BVN) {
+      return this.buildTestResult('BVN', firstName, lastName);
+    }
+
     this.logger.log(`BVN verification request [bvn=${bvn.slice(0, 4)}****]`);
 
     try {

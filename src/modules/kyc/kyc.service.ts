@@ -22,6 +22,7 @@ import { Queue } from 'bullmq';
 import * as path from 'path';
 import { AUTH_EVENTS_QUEUE, AuthJobName } from '../auth/auth.events';
 import { VirtualAccountService } from '../virtual-accounts/virtual-account.service';
+import { FieldEncryptionService } from '@/common/encryption/field-encryption.service';
 
 type PhotoFiles = {
   selfie: Express.Multer.File;
@@ -35,6 +36,7 @@ export class KycService {
     private readonly configService: ConfigService,
     private readonly prisma: PrismaService,
     private readonly identityService: IdentityVerificationService,
+    private readonly fieldEncryption: FieldEncryptionService,
     @InjectQueue(AUTH_EVENTS_QUEUE) private readonly authEventsQueue: Queue,
     private readonly virtualAccountService: VirtualAccountService,
   ) {}
@@ -136,7 +138,7 @@ export class KycService {
       return tx.kYC.update({
         where: { userId },
         data: {
-          nin,
+          nin: this.fieldEncryption.encrypt(nin),
           ninVerifiedAt: new Date(),
           step: KYCStep.BVN_REQUIRED,
           status: KYCStatus.PENDING,
@@ -204,7 +206,7 @@ export class KycService {
       return tx.kYC.update({
         where: { userId },
         data: {
-          bvn,
+          bvn: this.fieldEncryption.encrypt(bvn),
           bvnVerifiedAt: new Date(),
           step: KYCStep.NOK_REQUIRED,
           status: KYCStatus.PENDING,
@@ -505,8 +507,8 @@ export class KycService {
       status: kyc.status,
       step: kyc.step,
 
-      nin: kyc.nin ?? undefined,
-      bvn: kyc.bvn ?? undefined,
+      // NIN/BVN are encrypted at rest and never exposed in API responses.
+      // Presence is indicated by ninVerifiedAt / bvnVerifiedAt instead.
 
       nextOfKinName: kyc.nextOfKinName ?? undefined,
       nextOfKinRelationship: kyc.nextOfKinRelationship ?? undefined,

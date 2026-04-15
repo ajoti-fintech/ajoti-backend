@@ -783,9 +783,9 @@ model KYC {
   status KYCStatus @default(NOT_SUBMITTED)
   step   KYCStep   @default(NIN_REQUIRED)
 
-  // NIN/BVN
-  nin String? @db.VarChar(11)
-  bvn String? @db.VarChar(11)
+  // NIN/BVN — stored encrypted (AES-256-GCM, see FieldEncryptionService)
+  nin String? @db.Text
+  bvn String? @db.Text
 
   ninVerifiedAt DateTime?
   bvnVerifiedAt DateTime?

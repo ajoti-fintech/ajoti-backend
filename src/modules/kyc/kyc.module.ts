@@ -5,6 +5,7 @@ import { KycService } from './kyc.service';
 import { KycProcessor } from './kyc.processor';
 import { UsersModule } from '../users/users.module';
 import { IdentityVerificationService } from './identity-verification.service';
+import { FieldEncryptionService } from '@/common/encryption/field-encryption.service';
 import { PrismaModule } from '@/prisma';
 import { AUTH_EVENTS_QUEUE } from '../auth/auth.events';
 import { VirtualAccountModule } from '../virtual-accounts/virtual-account.module';
@@ -17,7 +18,7 @@ import { VirtualAccountModule } from '../virtual-accounts/virtual-account.module
     VirtualAccountModule,
   ],
   controllers: [KycController],
-  providers: [KycService, IdentityVerificationService, KycProcessor],
+  providers: [KycService, IdentityVerificationService, KycProcessor, FieldEncryptionService],
   exports: [KycService, IdentityVerificationService],
 })
 export class KycModule {}
