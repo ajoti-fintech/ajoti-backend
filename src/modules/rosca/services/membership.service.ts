@@ -33,7 +33,7 @@ export class MembershipService {
   // =========================================================================
 
   async requestToJoin(userId: string, circleId: string) {
-    return await this.prisma.$transaction(
+    const membership = await this.prisma.$transaction(
       async (tx) => {
         const wallet = await tx.wallet.findUnique({ where: { userId } });
         if (!wallet) throw new NotFoundException('Wallet not found');
@@ -91,6 +91,34 @@ export class MembershipService {
       },
       { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
     );
+
+    // Notify the circle admin after the transaction commits
+    Promise.all([
+      this.prisma.roscaCircle.findUnique({
+        where: { id: circleId },
+        select: { adminId: true, name: true },
+      }),
+      this.prisma.user.findUnique({
+        where: { id: userId },
+        select: { firstName: true, lastName: true },
+      }),
+    ])
+      .then(([circle, requester]) => {
+        if (!circle) return;
+        const requesterName = requester
+          ? `${requester.firstName} ${requester.lastName}`.trim()
+          : 'Someone';
+        this.notifications
+          .createInAppNotification(
+            circle.adminId,
+            `New join request for ${circle.name}`,
+            `${requesterName} has requested to join your savings group "${circle.name}". Review and approve or reject the request.`,
+          )
+          .catch(() => {});
+      })
+      .catch(() => {});
+
+    return membership;
   }
 
   async leaveCircle(circleId: string, userId: string) {

@@ -36,8 +36,6 @@ export class InviteService {
     if (!circle) throw new NotFoundException('Circle not found');
     if (circle.adminId !== adminId)
       throw new ForbiddenException('Only the circle admin can send invites');
-    if (circle.visibility !== 'PRIVATE')
-      throw new BadRequestException('Invites can only be sent for PRIVATE circles');
     if (circle.status !== CircleStatus.DRAFT)
       throw new BadRequestException('Circle is no longer accepting new members');
 
