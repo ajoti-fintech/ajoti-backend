@@ -239,6 +239,68 @@ export class SuperadminUsersService {
     return updated;
   }
 
+  // ── Admin Request Management ─────────────────────────────────────────────────
+
+  async approveAdminRequest(actorId: string, userId: string) {
+    const user = await this.prisma.user.findUnique({ where: { id: userId } });
+    if (!user) throw new NotFoundException('User not found');
+
+    if (!user.adminRequestedAt) {
+      throw new BadRequestException('This user has not submitted an admin access request');
+    }
+
+    if (user.role === 'ADMIN' || user.role === 'SUPERADMIN') {
+      throw new BadRequestException('User already has elevated role');
+    }
+
+    const updated = await this.prisma.user.update({
+      where: { id: userId },
+      data: { role: 'ADMIN', adminRequestedAt: null },
+      select: { id: true, email: true, firstName: true, lastName: true, role: true },
+    });
+
+    await this.prisma.auditLog.create({
+      data: {
+        actorId,
+        actorType: 'SUPERADMIN',
+        action: 'ADMIN_REQUEST_APPROVED',
+        entityType: 'USER',
+        entityId: userId,
+        metadata: { previousRole: user.role, newRole: 'ADMIN' },
+      },
+    });
+
+    return updated;
+  }
+
+  async rejectAdminRequest(actorId: string, userId: string) {
+    const user = await this.prisma.user.findUnique({ where: { id: userId } });
+    if (!user) throw new NotFoundException('User not found');
+
+    if (!user.adminRequestedAt) {
+      throw new BadRequestException('This user has not submitted an admin access request');
+    }
+
+    const updated = await this.prisma.user.update({
+      where: { id: userId },
+      data: { adminRequestedAt: null },
+      select: { id: true, email: true, firstName: true, lastName: true, role: true },
+    });
+
+    await this.prisma.auditLog.create({
+      data: {
+        actorId,
+        actorType: 'SUPERADMIN',
+        action: 'ADMIN_REQUEST_REJECTED',
+        entityType: 'USER',
+        entityId: userId,
+        metadata: {},
+      },
+    });
+
+    return updated;
+  }
+
   // ── Status Management ────────────────────────────────────────────────────────
 
   async updateUserStatus(actorId: string, userId: string, dto: UpdateUserStatusDto) {

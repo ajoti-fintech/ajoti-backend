@@ -132,7 +132,32 @@ export class VerifyPhotoDto {
   @IsEnum(GovernmentIdType)
   governmentIdType: GovernmentIdType;
 
-  // Optional if you don’t always need the back side
+  @ApiProperty({ example: '12 Allen Avenue' })
+  @IsString()
+  @IsNotEmpty()
+  address: string;
+
+  @ApiProperty({ example: 'Ikeja' })
+  @IsString()
+  @IsNotEmpty()
+  city: string;
+
+  @ApiProperty({ example: 'Lagos' })
+  @IsString()
+  @IsNotEmpty()
+  state: string;
+
+  @ApiProperty({ required: false })
+  @IsOptional()
+  @IsString()
+  lga?: string;
+
+  @ApiProperty({ example: 'Nigeria' })
+  @IsString()
+  @IsNotEmpty()
+  country: string;
+
+  // Optional if you don't always need the back side
   @ApiProperty({
     required: false,
     description: 'Set true if you want to enforce back image upload',
@@ -176,6 +201,9 @@ export class KycResponseDto {
   proofOfAddressType?: ProofOfAddressType;
   proofOfAddressUrl?: string;
 
+  ninVerified: boolean;
+  bvnVerified: boolean;
+  nokSubmitted: boolean;
   ninVerifiedAt?: Date;
   bvnVerifiedAt?: Date;
   submittedAt?: Date;

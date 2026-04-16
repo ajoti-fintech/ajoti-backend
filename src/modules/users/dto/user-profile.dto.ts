@@ -15,4 +15,10 @@ export class UserProfileResponseDto {
 
   @ApiProperty({ example: '+2348012345678' })
   phone: string;
+
+  @ApiProperty({ example: 'MEMBER', enum: ['MEMBER', 'ADMIN', 'SUPERADMIN'] })
+  role: string;
+
+  @ApiProperty({ example: null, nullable: true })
+  adminRequestedAt: string | null;
 }

@@ -94,6 +94,15 @@ export class KycService {
       throw new NotFoundException('KYC record not found');
     }
 
+    // Backfill kycLevel for records that pre-date the kycLevel column
+    if (kyc.kycLevel === 0 && kyc.step === KYCStep.SUBMITTED) {
+      const backfilled = await this.prisma.kYC.update({
+        where: { userId },
+        data: { kycLevel: 1, status: KYCStatus.APPROVED },
+      });
+      return this.mapToResponseDto(backfilled);
+    }
+
     return this.mapToResponseDto(kyc);
   }
 
@@ -111,14 +120,15 @@ export class KycService {
       kycRecord = await this.initializeKyc(userId);
     }
 
+    // Idempotent: if NIN is already verified, return current status without re-processing
+    if (kycRecord.ninVerifiedAt) {
+      return this.mapToResponseDto(kycRecord);
+    }
+
     if (kycRecord.step !== KYCStep.NIN_REQUIRED) {
       throw new BadRequestException(
         `Invalid KYC step. Current step: ${kycRecord.step}. Expected: ${KYCStep.NIN_REQUIRED}`,
       );
-    }
-
-    if (kycRecord.ninVerifiedAt) {
-      throw new BadRequestException('NIN already verified');
     }
 
     const identityVerification = await this.identityService.verifyNin(
@@ -165,14 +175,15 @@ export class KycService {
       throw new NotFoundException('KYC record not found. Please verify NIN first.');
     }
 
+    // Idempotent: if BVN is already verified, return current status without re-processing
+    if (kycRecord.bvnVerifiedAt) {
+      return this.mapToResponseDto(kycRecord);
+    }
+
     if (kycRecord.step !== KYCStep.BVN_REQUIRED) {
       throw new BadRequestException(
         `Invalid KYC step. Current step: ${kycRecord.step}. Expected: ${KYCStep.BVN_REQUIRED}`,
       );
-    }
-
-    if (kycRecord.bvnVerifiedAt) {
-      throw new BadRequestException('BVN already verified');
     }
 
     const identityVerification = await this.identityService.verifyBvn(
@@ -222,14 +233,24 @@ export class KycService {
       throw new NotFoundException('KYC record not found. Please complete previous steps first.');
     }
 
+    // Idempotent: if NOK already submitted or Level 1 already granted, return current status.
+    // Also backfill kycLevel=1 for records that pre-date the kycLevel column (step=SUBMITTED
+    // but kycLevel=0 due to migration default).
+    if (kycRecord.submittedAt || kycRecord.kycLevel >= 1) {
+      if (kycRecord.kycLevel === 0 && kycRecord.step === KYCStep.SUBMITTED) {
+        const backfilled = await this.prisma.kYC.update({
+          where: { userId },
+          data: { kycLevel: 1, status: KYCStatus.APPROVED },
+        });
+        return this.mapToResponseDto(backfilled);
+      }
+      return this.mapToResponseDto(kycRecord);
+    }
+
     if (kycRecord.step !== KYCStep.NOK_REQUIRED) {
       throw new BadRequestException(
         `Invalid KYC step. Current step: ${kycRecord.step}. Expected: ${KYCStep.NOK_REQUIRED}`,
       );
-    }
-
-    if (kycRecord.submittedAt) {
-      throw new BadRequestException('KYC already submitted');
     }
 
     // Level 1 is always auto-approved — NIN + BVN + NOK is the CBN baseline tier
@@ -350,6 +371,11 @@ export class KycService {
         governmentIdBackUrl: backUrl,
         selfieUploadedAt: new Date(),
         governmentIdUploadedAt: new Date(),
+        address: verifyPhotoDto.address,
+        city: verifyPhotoDto.city,
+        state: verifyPhotoDto.state,
+        lga: verifyPhotoDto.lga ?? null,
+        country: verifyPhotoDto.country,
         step: testBypass ? KYCStep.SUBMITTED : KYCStep.PHOTO_REQUIRED,
         status: testBypass ? KYCStatus.APPROVED : KYCStatus.PENDING,
         ...(testBypass ? { kycLevel: 2, reviewedAt: new Date(), reviewedBy: 'SYSTEM_TEST_BYPASS', rejectionReason: null } : {}),
@@ -719,6 +745,9 @@ export class KycService {
       proofOfAddressType: kyc.proofOfAddressType ?? undefined,
       proofOfAddressUrl: kyc.proofOfAddressUrl ?? undefined,
 
+      ninVerified: !!kyc.ninVerifiedAt,
+      bvnVerified: !!kyc.bvnVerifiedAt,
+      nokSubmitted: !!kyc.submittedAt,
       ninVerifiedAt: kyc.ninVerifiedAt ?? undefined,
       bvnVerifiedAt: kyc.bvnVerifiedAt ?? undefined,
       submittedAt: kyc.submittedAt ?? undefined,

@@ -70,4 +70,26 @@ export class SuperadminUsersController {
     const result = await this.usersService.promoteToSuperadmin(req.user.userId, userId);
     return { success: true, data: result };
   }
+
+  @Patch(':userId/approve-admin')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'Approve a pending admin access request',
+    description: 'Sets the user role to ADMIN. Logs the action to the audit trail.',
+  })
+  async approveAdminRequest(@Param('userId') userId: string, @Request() req: any) {
+    const result = await this.usersService.approveAdminRequest(req.user.id, userId);
+    return { success: true, data: result };
+  }
+
+  @Patch(':userId/reject-admin')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'Reject a pending admin access request',
+    description: 'Clears the pending request without changing the user role. Logs the action to the audit trail.',
+  })
+  async rejectAdminRequest(@Param('userId') userId: string, @Request() req: any) {
+    const result = await this.usersService.rejectAdminRequest(req.user.id, userId);
+    return { success: true, data: result };
+  }
 }

@@ -140,4 +140,14 @@ export class UsersController {
     const hasPin = await this.usersService.hasPinSet(userId);
     return { hasPin };
   }
+
+  @Post('me/request-admin')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'Request admin access',
+    description: 'Submits a request to become an admin. Requires KYC Level 1. Superadmin reviews and approves.',
+  })
+  async requestAdminAccess(@CurrentUser('userId') userId: string) {
+    return this.usersService.requestAdminAccess(userId);
+  }
 }

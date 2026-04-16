@@ -74,10 +74,10 @@ export class SuperadminAnalyticsService {
       SELECT COALESCE(SUM(sub.balance), 0) AS total
       FROM (
         SELECT DISTINCT ON (w.id)
-          le."balanceAfter" AS balance
-        FROM "Wallet" w
-        LEFT JOIN "LedgerEntry" le ON le."walletId" = w.id
-        ORDER BY w.id, le."createdAt" DESC
+          le."balance_after" AS balance
+        FROM "wallets" w
+        LEFT JOIN "ledger_entries" le ON le."wallet_id" = w.id
+        ORDER BY w.id, le."created_at" DESC
       ) sub
     `;
 
@@ -131,10 +131,10 @@ export class SuperadminAnalyticsService {
       SELECT COALESCE(SUM(sub.balance), 0) AS total
       FROM (
         SELECT DISTINCT ON (w.id)
-          le."balanceAfter" AS balance
-        FROM "Wallet" w
-        LEFT JOIN "LedgerEntry" le ON le."walletId" = w.id
-        ORDER BY w.id, le."createdAt" DESC
+          le."balance_after" AS balance
+        FROM "wallets" w
+        LEFT JOIN "ledger_entries" le ON le."wallet_id" = w.id
+        ORDER BY w.id, le."created_at" DESC
       ) sub
     `;
 
@@ -261,9 +261,9 @@ export class SuperadminAnalyticsService {
     `;
 
     const dailyCircles = await this.prisma.$queryRaw<{ day: Date; count: bigint }[]>`
-      SELECT DATE_TRUNC('day', "createdAt") AS day, COUNT(*) AS count
-      FROM "RoscaCircle"
-      WHERE "createdAt" >= ${currentStart}
+      SELECT DATE_TRUNC('day', "created_at") AS day, COUNT(*) AS count
+      FROM "rosca_circles"
+      WHERE "created_at" >= ${currentStart}
       GROUP BY day ORDER BY day
     `;
 

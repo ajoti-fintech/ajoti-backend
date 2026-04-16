@@ -736,6 +736,7 @@ model User {
   status          UserStatus @default(ACTIVE)
   suspendedAt     DateTime?  @map("suspended_at")
   suspensionReason String?   @map("suspension_reason")
+  adminRequestedAt DateTime? @map("admin_requested_at")
 
   // Relations
   wallet         Wallet?
