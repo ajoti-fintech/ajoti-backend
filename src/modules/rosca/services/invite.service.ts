@@ -60,7 +60,8 @@ export class InviteService {
         .createInAppNotification(
           user.id,
           `You've been invited to join ${circle.name}`,
-          `You have a private invitation to join the savings group "${circle.name}". Use your invite link before it expires.`,
+          `You have a private invitation to join the savings group "${circle.name}". Tap to accept before it expires.`,
+          `/rosca/invite/${invite.token}`,
         )
         .catch(() => {});
     }
@@ -95,6 +96,34 @@ export class InviteService {
 
     await this.prisma.roscaInvite.delete({ where: { id: inviteId } });
     return { message: 'Invite revoked successfully' };
+  }
+
+  async getMyInvites(userId: string) {
+    const user = await this.prisma.user.findUnique({ where: { id: userId }, select: { email: true } });
+    if (!user) return [];
+
+    return this.prisma.roscaInvite.findMany({
+      where: {
+        email: user.email,
+        usedAt: null,
+        expiresAt: { gt: new Date() },
+      },
+      include: {
+        circle: {
+          select: {
+            id: true,
+            name: true,
+            contributionAmount: true,
+            frequency: true,
+            durationCycles: true,
+            maxSlots: true,
+            filledSlots: true,
+            admin: { select: { firstName: true, lastName: true } },
+          },
+        },
+      },
+      orderBy: { createdAt: 'desc' },
+    });
   }
 
   async joinByInvite(userId: string, token: string) {
@@ -147,16 +176,25 @@ export class InviteService {
         tx,
       );
 
+      const newPosition = circle.filledSlots + 1;
+
       const membership = await tx.roscaMembership.create({
         data: {
           id: membershipId,
           circleId: circle.id,
           userId,
-          status: MembershipStatus.PENDING,
+          status: MembershipStatus.ACTIVE,
+          approvedAt: new Date(),
+          payoutPosition: newPosition,
           collateralAmount,
           collateralReleased: false,
           joinedAt: new Date(),
         },
+      });
+
+      await tx.roscaCircle.update({
+        where: { id: circle.id },
+        data: { filledSlots: { increment: 1 } },
       });
 
       await tx.roscaInvite.update({

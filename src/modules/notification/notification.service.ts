@@ -22,6 +22,7 @@ interface CreateNotificationParams {
   type: NotificationType;
   title: string;
   body: string;
+  actionUrl?: string;
 }
 
 @Injectable()
@@ -47,6 +48,7 @@ export class NotificationService {
         type: params.type,
         title: params.title,
         body: params.body,
+        actionUrl: params.actionUrl ?? null,
         status: NotificationStatus.PENDING,
       },
     });
@@ -216,12 +218,13 @@ export class NotificationService {
    * Creates an in-app notification record.
    * This is returned via the API and pushed in real-time via WebSocket.
    */
-  async createInAppNotification(userId: string, title: string, body: string) {
+  async createInAppNotification(userId: string, title: string, body: string, actionUrl?: string) {
     const record = await this.createRecord({
       userId,
       type: NotificationType.IN_APP,
       title,
       body,
+      actionUrl,
     });
 
     // Real-time push via WebSocket
@@ -229,6 +232,7 @@ export class NotificationService {
       id: record.id,
       title: record.title,
       body: record.body,
+      actionUrl: record.actionUrl ?? null,
       createdAt: record.createdAt,
     });
 

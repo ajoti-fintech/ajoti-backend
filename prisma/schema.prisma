@@ -900,6 +900,7 @@ model Notification {
   type      NotificationType
   title     String
   body      String
+  actionUrl String?  @map("action_url") // Frontend deep-link (e.g. /rosca/invite/:token)
 
   status    NotificationStatus @default(PENDING)
   sentAt  DateTime?

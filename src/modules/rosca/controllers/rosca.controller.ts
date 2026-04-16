@@ -134,6 +134,24 @@ export class RoscaController {
     };
   }
 
+  @Get('my-invites')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Get pending invites for the current user (matched by email)' })
+  async getMyInvites(@CurrentUser('userId') userId: string) {
+    const invites = await this.inviteService.getMyInvites(userId);
+    return {
+      success: true,
+      message: 'Invites retrieved successfully',
+      data: invites.map((invite) => ({
+        ...invite,
+        circle: {
+          ...invite.circle,
+          contributionAmount: invite.circle.contributionAmount.toString(),
+        },
+      })),
+    };
+  }
+
   @Get(':circleId')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Get detailed view of a specific ROSCA circle' })
