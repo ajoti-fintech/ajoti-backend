@@ -2,6 +2,7 @@ import {
     Injectable,
     Logger,
     BadRequestException,
+    ForbiddenException,
     InternalServerErrorException,
     UnauthorizedException,
 } from '@nestjs/common';
@@ -18,6 +19,7 @@ import {
 import { v4 as uuidv4 } from 'uuid';
 import { PrismaService } from '@/prisma';
 import { InitializeWithdrawalDto, WithdrawalResponseDto } from './dto/withdrawal.dto';
+import { getSingleLimitKobo, formatNaira } from '../kyc/kyc-limits.helper';
 
 /**
  * Withdrawal flow (matches API docs Phase 1 HIGH priorities):
@@ -59,6 +61,23 @@ export class WithdrawalService {
         // Min withdrawal: 100 NGN (10000 kobo)
         if (amountKobo < 10000n) {
             throw new BadRequestException('Minimum withdrawal amount is NGN 100');
+        }
+
+        // KYC enforcement — minimum Level 1 required for all withdrawals
+        const kyc = await this.prisma.kYC.findUnique({ where: { userId } });
+        const kycLevel = kyc?.kycLevel ?? 0;
+
+        if (kycLevel < 1) {
+            throw new ForbiddenException(
+                'KYC verification is required before making withdrawals. Please complete identity verification.',
+            );
+        }
+
+        const singleLimit = getSingleLimitKobo(kycLevel);
+        if (amountKobo > singleLimit) {
+            throw new BadRequestException(
+                `Withdrawal amount exceeds your KYC Level ${kycLevel} single-transaction limit of ${formatNaira(singleLimit)}. Please upgrade your KYC level.`,
+            );
         }
 
         // Verify transaction PIN

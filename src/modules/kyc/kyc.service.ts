@@ -31,6 +31,9 @@ type PhotoFiles = {
   back?: Express.Multer.File;
 };
 
+/** Magic NIN that bypasses external verification and auto-approves all KYC tiers in non-production */
+const TEST_NIN = '00000000000';
+
 @Injectable()
 export class KycService {
   private readonly logger = new Logger(KycService.name);
@@ -45,8 +48,17 @@ export class KycService {
   ) {}
 
   private fileToPublicUrl(file: Express.Multer.File) {
-    const rel = path.relative(process.cwd(), file.path).split(path.sep).join('/'); // Normalize to forward slashes
+    const rel = path.relative(process.cwd(), file.path).split(path.sep).join('/');
     return `/${rel}`;
+  }
+
+  /** Returns true when the stored NIN for a KYC record is the magic test NIN */
+  private isTestBypass(kycRecord: KYC): boolean {
+    return (
+      process.env.NODE_ENV !== 'production' &&
+      !!kycRecord.nin &&
+      this.fieldEncryption.decrypt(kycRecord.nin) === TEST_NIN
+    );
   }
 
   /**
@@ -91,7 +103,6 @@ export class KycService {
   async verifyNin(userId: string, verifyNinDto: VerifyNinDto): Promise<KycResponseDto> {
     const { nin, firstName, lastName, dob } = verifyNinDto;
 
-    // Get or create KYC record
     let kycRecord = await this.prisma.kYC.findUnique({
       where: { userId },
     });
@@ -100,19 +111,16 @@ export class KycService {
       kycRecord = await this.initializeKyc(userId);
     }
 
-    // Validate KYC step
     if (kycRecord.step !== KYCStep.NIN_REQUIRED) {
       throw new BadRequestException(
         `Invalid KYC step. Current step: ${kycRecord.step}. Expected: ${KYCStep.NIN_REQUIRED}`,
       );
     }
 
-    // Check if already verified
     if (kycRecord.ninVerifiedAt) {
       throw new BadRequestException('NIN already verified');
     }
 
-    // Verify NIN with identity service
     const identityVerification = await this.identityService.verifyNin(
       nin,
       firstName,
@@ -126,18 +134,10 @@ export class KycService {
       );
     }
 
-    // Update KYC record with transaction
     const updatedKyc = await this.prisma.$transaction(async (tx) => {
-      // Verify user exists
-      const user = await tx.user.findUnique({
-        where: { id: userId },
-      });
+      const user = await tx.user.findUnique({ where: { id: userId } });
+      if (!user) throw new NotFoundException('User not found');
 
-      if (!user) {
-        throw new NotFoundException('User not found');
-      }
-
-      // Update KYC record
       return tx.kYC.update({
         where: { userId },
         data: {
@@ -159,28 +159,22 @@ export class KycService {
   async verifyBvn(userId: string, verifyBvnDto: VerifyBvnDto): Promise<KycResponseDto> {
     const { bvn, firstName, lastName, dob } = verifyBvnDto;
 
-    // Get KYC record
-    const kycRecord = await this.prisma.kYC.findUnique({
-      where: { userId },
-    });
+    const kycRecord = await this.prisma.kYC.findUnique({ where: { userId } });
 
     if (!kycRecord) {
       throw new NotFoundException('KYC record not found. Please verify NIN first.');
     }
 
-    // Validate KYC step
     if (kycRecord.step !== KYCStep.BVN_REQUIRED) {
       throw new BadRequestException(
         `Invalid KYC step. Current step: ${kycRecord.step}. Expected: ${KYCStep.BVN_REQUIRED}`,
       );
     }
 
-    // Check if already verified
     if (kycRecord.bvnVerifiedAt) {
       throw new BadRequestException('BVN already verified');
     }
 
-    // Verify BVN with identity service
     const identityVerification = await this.identityService.verifyBvn(
       bvn,
       firstName,
@@ -194,18 +188,10 @@ export class KycService {
       );
     }
 
-    // Update KYC record with transaction
     const updatedKyc = await this.prisma.$transaction(async (tx) => {
-      // Verify user exists
-      const user = await tx.user.findUnique({
-        where: { id: userId },
-      });
+      const user = await tx.user.findUnique({ where: { id: userId } });
+      if (!user) throw new NotFoundException('User not found');
 
-      if (!user) {
-        throw new NotFoundException('User not found');
-      }
-
-      // Update KYC record
       return tx.kYC.update({
         where: { userId },
         data: {
@@ -218,47 +204,35 @@ export class KycService {
       });
     });
 
-    // Internal sync: if user already has a static VA, update BVN at provider.
-    // This is best-effort and does not block KYC completion.
     await this.virtualAccountService.syncBvnFromKyc(userId, bvn);
 
     return this.mapToResponseDto(updatedKyc);
   }
 
   /**
-   * Submit Next of Kin information and complete KYC
+   * Submit Next of Kin — completes Level 1 KYC (auto-approved for all users).
+   * Level 1 grants single ₦50,000 / daily ₦300,000 transaction limits.
    */
   async submitNextOfKin(userId: string, verifyNokDto: VerifyNokDto): Promise<KycResponseDto> {
     const { nextOfKinName, nextOfKinRelationship, nextOfKinPhone } = verifyNokDto;
 
-    // Get KYC record
-    const kycRecord = await this.prisma.kYC.findUnique({
-      where: { userId },
-    });
+    const kycRecord = await this.prisma.kYC.findUnique({ where: { userId } });
 
     if (!kycRecord) {
       throw new NotFoundException('KYC record not found. Please complete previous steps first.');
     }
 
-    // Validate KYC step
     if (kycRecord.step !== KYCStep.NOK_REQUIRED) {
       throw new BadRequestException(
         `Invalid KYC step. Current step: ${kycRecord.step}. Expected: ${KYCStep.NOK_REQUIRED}`,
       );
     }
 
-    // Check if already submitted
     if (kycRecord.submittedAt) {
       throw new BadRequestException('KYC already submitted');
     }
 
-    // In non-production, auto-approve when the magic test NIN was used
-    const isTestBypass =
-      process.env.NODE_ENV !== 'production' &&
-      !!kycRecord.nin &&
-      this.fieldEncryption.decrypt(kycRecord.nin) === '00000000000';
-
-    // Update KYC record
+    // Level 1 is always auto-approved — NIN + BVN + NOK is the CBN baseline tier
     const updatedKyc = await this.prisma.kYC.update({
       where: { userId },
       data: {
@@ -266,43 +240,59 @@ export class KycService {
         nextOfKinRelationship,
         nextOfKinPhone,
         step: KYCStep.SUBMITTED,
-        status: isTestBypass ? KYCStatus.APPROVED : KYCStatus.PENDING,
+        status: KYCStatus.APPROVED,
+        kycLevel: 1,
         submittedAt: new Date(),
-        ...(isTestBypass ? { reviewedAt: new Date(), reviewedBy: 'SYSTEM_TEST_BYPASS' } : {}),
+        reviewedAt: new Date(),
+        reviewedBy: 'SYSTEM_AUTO_APPROVE',
         updatedAt: new Date(),
       },
     });
 
-    if (isTestBypass) {
-      this.logger.warn(`[TEST BYPASS] KYC auto-approved for userId=${userId}`);
-    }
+    this.logger.log(`KYC Level 1 auto-approved for userId=${userId}`);
+
+    const user = await this.prisma.user.findUnique({
+      where: { id: userId },
+      select: { email: true, firstName: true, lastName: true },
+    });
+
+    await this.authEventsQueue.add(
+      AuthJobName.KYC_STATUS_CHANGED,
+      {
+        userId,
+        email: user?.email,
+        fullName: user ? `${user.firstName} ${user.lastName}` : '',
+        status: 'APPROVED',
+        timestamp: new Date().toISOString(),
+      },
+      {
+        attempts: 5,
+        backoff: { type: 'exponential', delay: 5000 },
+        removeOnComplete: true,
+      },
+    );
 
     return this.mapToResponseDto(updatedKyc);
   }
 
   /**
-   * Submit Address information for verification
+   * Submit Address information for verification (legacy step, kept for backwards compat)
    */
   async submitAddress(userId: string, verifyAddressDto: VerifyAddressDto): Promise<KycResponseDto> {
     const { address, city, state, lga, country } = verifyAddressDto;
 
-    // Get KYC record
-    const kycRecord = await this.prisma.kYC.findUnique({
-      where: { userId },
-    });
+    const kycRecord = await this.prisma.kYC.findUnique({ where: { userId } });
 
     if (!kycRecord) {
       throw new NotFoundException('KYC record not found. Please complete previous steps first.');
     }
 
-    // Validate KYC step
     if (kycRecord.step !== KYCStep.ADDRESS_REQUIRED) {
       throw new BadRequestException(
         `Invalid KYC step. Current step: ${kycRecord.step}. Expected: ${KYCStep.ADDRESS_REQUIRED}`,
       );
     }
 
-    // Update KYC record
     const updatedKyc = await this.prisma.kYC.update({
       where: { userId },
       data: {
@@ -312,7 +302,7 @@ export class KycService {
         lga,
         country,
         step: KYCStep.SUBMITTED,
-        status: KYCStatus.PENDING, // Changed to PENDING for review
+        status: KYCStatus.PENDING,
         submittedAt: new Date(),
         updatedAt: new Date(),
       },
@@ -322,24 +312,25 @@ export class KycService {
   }
 
   /**
-   * Submit Photo for verification
+   * Submit government ID (selfie + photo ID) for Level 2 KYC upgrade.
+   * Requires existing Level 1 approval. Superadmin reviews; test NIN auto-approves.
+   * Level 2 grants single ₦100,000 / daily ₦500,000.
    */
   async submitPhoto(
     userId: string,
     verifyPhotoDto: VerifyPhotoDto,
     files: PhotoFiles,
   ): Promise<KycResponseDto> {
-    const kycRecord = await this.prisma.kYC.findUnique({
-      where: { userId },
-    });
+    const kycRecord = await this.prisma.kYC.findUnique({ where: { userId } });
 
     if (!kycRecord) {
       throw new NotFoundException('KYC record not found. Please complete previous steps first.');
     }
 
-    if (kycRecord.step !== KYCStep.PHOTO_REQUIRED) {
+    // Must be Level 1 approved and at the SUBMITTED step (i.e. not mid-review)
+    if (kycRecord.kycLevel < 1 || kycRecord.status !== KYCStatus.APPROVED || kycRecord.step !== KYCStep.SUBMITTED) {
       throw new BadRequestException(
-        `Invalid KYC step. Current step: ${kycRecord.step}. Expected: ${KYCStep.PHOTO_REQUIRED}`,
+        'Level 2 upgrade requires an approved Level 1 KYC. Please complete Level 1 first.',
       );
     }
 
@@ -347,6 +338,8 @@ export class KycService {
     const selfieUrl = this.fileToPublicUrl(selfie);
     const frontUrl = this.fileToPublicUrl(front);
     const backUrl = back ? this.fileToPublicUrl(back) : null;
+
+    const testBypass = this.isTestBypass(kycRecord);
 
     const updatedKyc = await this.prisma.kYC.update({
       where: { userId },
@@ -357,47 +350,61 @@ export class KycService {
         governmentIdBackUrl: backUrl,
         selfieUploadedAt: new Date(),
         governmentIdUploadedAt: new Date(),
-        step: KYCStep.PROOF_OF_ADDRESS_REQUIRED,
-        status: KYCStatus.PENDING,
+        step: testBypass ? KYCStep.SUBMITTED : KYCStep.PHOTO_REQUIRED,
+        status: testBypass ? KYCStatus.APPROVED : KYCStatus.PENDING,
+        ...(testBypass ? { kycLevel: 2, reviewedAt: new Date(), reviewedBy: 'SYSTEM_TEST_BYPASS', rejectionReason: null } : {}),
         updatedAt: new Date(),
       },
     });
+
+    if (testBypass) {
+      this.logger.warn(`[TEST BYPASS] KYC Level 2 auto-approved for userId=${userId}`);
+    }
 
     return this.mapToResponseDto(updatedKyc);
   }
 
   /**
-   * Submit Proof of Address for verification
+   * Submit proof of address for Level 3 KYC upgrade.
+   * Requires existing Level 2 approval. Superadmin reviews; test NIN auto-approves.
+   * Level 3 grants single ₦5,000,000 / daily ₦25,000,000.
    */
   async submitProofOfAddress(
     userId: string,
     verifyProofOfAddressDto: VerifyProofOfAddressDto,
     file: Express.Multer.File,
   ): Promise<KycResponseDto> {
-    const kycRecord = await this.prisma.kYC.findUnique({
-      where: { userId },
-    });
+    const kycRecord = await this.prisma.kYC.findUnique({ where: { userId } });
 
     if (!kycRecord) {
       throw new NotFoundException('KYC record not found. Please complete previous steps first.');
     }
 
-    if (kycRecord.step !== KYCStep.PROOF_OF_ADDRESS_REQUIRED) {
+    // Must be Level 2 approved and at SUBMITTED step
+    if (kycRecord.kycLevel < 2 || kycRecord.status !== KYCStatus.APPROVED || kycRecord.step !== KYCStep.SUBMITTED) {
       throw new BadRequestException(
-        `Invalid KYC step. Current step: ${kycRecord.step}. Expected: ${KYCStep.PROOF_OF_ADDRESS_REQUIRED}`,
+        'Level 3 upgrade requires an approved Level 2 KYC. Please complete Level 2 first.',
       );
     }
 
     const proofOfAddressUrl = this.fileToPublicUrl(file);
+    const testBypass = this.isTestBypass(kycRecord);
 
     const updatedKyc = await this.prisma.kYC.update({
       where: { userId },
       data: {
         proofOfAddressUrl,
         proofOfAddressType: verifyProofOfAddressDto.proofOfAddressType,
+        step: testBypass ? KYCStep.SUBMITTED : KYCStep.PROOF_OF_ADDRESS_REQUIRED,
+        status: testBypass ? KYCStatus.APPROVED : KYCStatus.PENDING,
+        ...(testBypass ? { kycLevel: 3, reviewedAt: new Date(), reviewedBy: 'SYSTEM_TEST_BYPASS', rejectionReason: null } : {}),
         updatedAt: new Date(),
       },
     });
+
+    if (testBypass) {
+      this.logger.warn(`[TEST BYPASS] KYC Level 3 auto-approved for userId=${userId}`);
+    }
 
     return this.mapToResponseDto(updatedKyc);
   }
@@ -417,7 +424,10 @@ export class KycService {
     }>
   > {
     const records = await this.prisma.kYC.findMany({
-      where: { status: KYCStatus.PENDING, step: KYCStep.SUBMITTED },
+      where: {
+        status: KYCStatus.PENDING,
+        step: { in: [KYCStep.SUBMITTED, KYCStep.PHOTO_REQUIRED, KYCStep.PROOF_OF_ADDRESS_REQUIRED] },
+      },
       orderBy: { submittedAt: 'asc' },
       select: {
         userId: true,
@@ -441,9 +451,10 @@ export class KycService {
   }
 
   /**
-   * User: Resubmit KYC after rejection — resets step to NOK_REQUIRED so the
-   * user can update their NOK, address, photos and proof of address.
-   * NIN and BVN remain verified; only the post-identity steps are cleared.
+   * User: Resubmit KYC documents after rejection.
+   * - Level 0 rejection (initial KYC rejected): resets to NOK_REQUIRED, clears all docs
+   * - Level 1 (rejected Level 2 upgrade): clears Level 2 docs, restores to APPROVED Level 1
+   * - Level 2 (rejected Level 3 upgrade): clears Level 3 docs, restores to APPROVED Level 2
    */
   async resubmitKyc(userId: string): Promise<KycResponseDto> {
     const kycRecord = await this.prisma.kYC.findUnique({ where: { userId } });
@@ -458,51 +469,114 @@ export class KycService {
       );
     }
 
+    // Level 0 → user never completed Level 1, start fresh from NOK
+    if (kycRecord.kycLevel === 0) {
+      const updatedKyc = await this.prisma.kYC.update({
+        where: { userId },
+        data: {
+          status: KYCStatus.NOT_SUBMITTED,
+          step: KYCStep.NOK_REQUIRED,
+          nextOfKinName: null,
+          nextOfKinRelationship: null,
+          nextOfKinPhone: null,
+          address: null,
+          city: null,
+          state: null,
+          lga: null,
+          country: null,
+          selfieUrl: null,
+          governmentIdType: null,
+          governmentIdFrontUrl: null,
+          governmentIdBackUrl: null,
+          proofOfAddressType: null,
+          proofOfAddressUrl: null,
+          submittedAt: null,
+          reviewedAt: null,
+          reviewedBy: null,
+          rejectionReason: null,
+          updatedAt: new Date(),
+        },
+      });
+      return this.mapToResponseDto(updatedKyc);
+    }
+
+    // Level 1 rejected Level 2 docs → restore to APPROVED Level 1, clear gov ID docs
+    if (kycRecord.kycLevel === 1) {
+      const updatedKyc = await this.prisma.kYC.update({
+        where: { userId },
+        data: {
+          status: KYCStatus.APPROVED,
+          step: KYCStep.SUBMITTED,
+          selfieUrl: null,
+          governmentIdType: null,
+          governmentIdFrontUrl: null,
+          governmentIdBackUrl: null,
+          rejectionReason: null,
+          reviewedAt: null,
+          reviewedBy: null,
+          updatedAt: new Date(),
+        },
+      });
+      return this.mapToResponseDto(updatedKyc);
+    }
+
+    // Level 2 rejected Level 3 docs → restore to APPROVED Level 2, clear proof of address
     const updatedKyc = await this.prisma.kYC.update({
       where: { userId },
       data: {
-        status: KYCStatus.NOT_SUBMITTED,
-        step: KYCStep.NOK_REQUIRED,
-        // Clear prior submission data so user re-enters it
-        nextOfKinName: null,
-        nextOfKinRelationship: null,
-        nextOfKinPhone: null,
-        address: null,
-        city: null,
-        state: null,
-        lga: null,
-        country: null,
-        selfieUrl: null,
-        governmentIdType: null,
-        governmentIdFrontUrl: null,
-        governmentIdBackUrl: null,
+        status: KYCStatus.APPROVED,
+        step: KYCStep.SUBMITTED,
         proofOfAddressType: null,
         proofOfAddressUrl: null,
-        submittedAt: null,
+        rejectionReason: null,
         reviewedAt: null,
         reviewedBy: null,
-        rejectionReason: null,
         updatedAt: new Date(),
       },
     });
-
     return this.mapToResponseDto(updatedKyc);
   }
 
   /**
-   * Admin: Approve KYC
+   * Superadmin: Approve KYC.
+   * - PHOTO_REQUIRED → Level 2 approved
+   * - PROOF_OF_ADDRESS_REQUIRED → Level 3 approved
+   * - SUBMITTED (legacy) → Level 1 approved (backwards compat for manual approvals)
    */
   async approveKyc(userId: string, reviewedBy: string): Promise<KycResponseDto> {
-    const kycRecord = await this.prisma.kYC.findUnique({
-      where: { userId },
-    });
+    const kycRecord = await this.prisma.kYC.findUnique({ where: { userId } });
 
     if (!kycRecord) {
       throw new NotFoundException('KYC record not found');
     }
 
-    if (kycRecord.step !== KYCStep.SUBMITTED) {
-      throw new BadRequestException('KYC must be submitted before approval');
+    const reviewableSteps: KYCStep[] = [
+      KYCStep.SUBMITTED,
+      KYCStep.PHOTO_REQUIRED,
+      KYCStep.PROOF_OF_ADDRESS_REQUIRED,
+    ];
+
+    if (!reviewableSteps.includes(kycRecord.step)) {
+      throw new BadRequestException(
+        `KYC is not awaiting review. Current step: ${kycRecord.step}`,
+      );
+    }
+
+    if (kycRecord.status !== KYCStatus.PENDING) {
+      throw new BadRequestException(
+        `KYC is not pending review. Current status: ${kycRecord.status}`,
+      );
+    }
+
+    // Determine new level based on which tier was reviewed
+    let newLevel = kycRecord.kycLevel;
+    if (kycRecord.step === KYCStep.PHOTO_REQUIRED) {
+      newLevel = 2;
+    } else if (kycRecord.step === KYCStep.PROOF_OF_ADDRESS_REQUIRED) {
+      newLevel = 3;
+    } else if (kycRecord.step === KYCStep.SUBMITTED && kycRecord.kycLevel === 0) {
+      // Legacy manual approval of a Level 1 submission
+      newLevel = 1;
     }
 
     const [updatedKyc, user] = await Promise.all([
@@ -510,6 +584,8 @@ export class KycService {
         where: { userId },
         data: {
           status: KYCStatus.APPROVED,
+          step: KYCStep.SUBMITTED,
+          kycLevel: newLevel,
           reviewedAt: new Date(),
           reviewedBy,
           rejectionReason: null,
@@ -529,6 +605,7 @@ export class KycService {
         email: user?.email,
         fullName: user ? `${user.firstName} ${user.lastName}` : '',
         status: 'APPROVED',
+        kycLevel: newLevel,
         timestamp: new Date().toISOString(),
       },
       {
@@ -542,23 +619,38 @@ export class KycService {
   }
 
   /**
-   * Admin: Reject KYC
+   * Superadmin: Reject KYC.
+   * - PHOTO_REQUIRED/PROOF_OF_ADDRESS_REQUIRED → tier rejection; user retains current kycLevel,
+   *   status set to REJECTED so they can resubmit the tier docs.
+   * - SUBMITTED (legacy Level 0) → full rejection, user must restart from NOK.
    */
   async rejectKyc(
     userId: string,
     reviewedBy: string,
     rejectionReason: string,
   ): Promise<KycResponseDto> {
-    const kycRecord = await this.prisma.kYC.findUnique({
-      where: { userId },
-    });
+    const kycRecord = await this.prisma.kYC.findUnique({ where: { userId } });
 
     if (!kycRecord) {
       throw new NotFoundException('KYC record not found');
     }
 
-    if (kycRecord.step !== KYCStep.SUBMITTED) {
-      throw new BadRequestException('KYC must be submitted before rejection');
+    const reviewableSteps: KYCStep[] = [
+      KYCStep.SUBMITTED,
+      KYCStep.PHOTO_REQUIRED,
+      KYCStep.PROOF_OF_ADDRESS_REQUIRED,
+    ];
+
+    if (!reviewableSteps.includes(kycRecord.step)) {
+      throw new BadRequestException(
+        `KYC is not awaiting review. Current step: ${kycRecord.step}`,
+      );
+    }
+
+    if (kycRecord.status !== KYCStatus.PENDING) {
+      throw new BadRequestException(
+        `KYC is not pending review. Current status: ${kycRecord.status}`,
+      );
     }
 
     const [updatedKyc, user] = await Promise.all([
@@ -607,28 +699,23 @@ export class KycService {
       userId: kyc.userId,
       status: kyc.status,
       step: kyc.step,
-
-      // NIN/BVN are encrypted at rest and never exposed in API responses.
-      // Presence is indicated by ninVerifiedAt / bvnVerifiedAt instead.
+      kycLevel: kyc.kycLevel,
 
       nextOfKinName: kyc.nextOfKinName ?? undefined,
       nextOfKinRelationship: kyc.nextOfKinRelationship ?? undefined,
       nextOfKinPhone: kyc.nextOfKinPhone ?? undefined,
 
-      // Address
       address: kyc.address ?? undefined,
       city: kyc.city ?? undefined,
       state: kyc.state ?? undefined,
       lga: kyc.lga ?? undefined,
       country: kyc.country ?? undefined,
 
-      // Photo / ID
       selfieUrl: kyc.selfieUrl ?? undefined,
       governmentIdType: kyc.governmentIdType ?? undefined,
       governmentIdFrontUrl: kyc.governmentIdFrontUrl ?? undefined,
       governmentIdBackUrl: kyc.governmentIdBackUrl ?? undefined,
 
-      // Proof of address
       proofOfAddressType: kyc.proofOfAddressType ?? undefined,
       proofOfAddressUrl: kyc.proofOfAddressUrl ?? undefined,
 

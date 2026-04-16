@@ -17,6 +17,7 @@ import {
   FundingReconciliationScheduler,
   ManualFundingReconcileResult,
 } from './funding-reconciliation.scheduler';
+import { getSingleLimitKobo, formatNaira } from '../kyc/kyc-limits.helper';
 
 @Injectable()
 export class FundingService {
@@ -47,6 +48,25 @@ export class FundingService {
     if (!wallet) throw new BadRequestException('Wallet not found');
     if (wallet.status !== 'ACTIVE') {
       throw new BadRequestException('Wallet is not active');
+    }
+
+    // KYC enforcement — minimum Level 1 (NIN + BVN + NOK) required for all transactions
+    const kyc = await this.prisma.kYC.findUnique({ where: { userId } });
+    const kycLevel = kyc?.kycLevel ?? 0;
+
+    if (kycLevel < 1) {
+      throw new ForbiddenException(
+        'KYC verification is required before funding your wallet. Please complete identity verification.',
+      );
+    }
+
+    const amountKobo = BigInt(dto.amount);
+    const singleLimit = getSingleLimitKobo(kycLevel);
+
+    if (amountKobo > singleLimit) {
+      throw new BadRequestException(
+        `Transaction amount exceeds your KYC Level ${kycLevel} single-transaction limit of ${formatNaira(singleLimit)}. Please upgrade your KYC level.`,
+      );
     }
 
     const reference = `AJT-FUND-${crypto.randomUUID()}`;

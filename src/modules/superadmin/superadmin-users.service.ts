@@ -205,6 +205,40 @@ export class SuperadminUsersService {
     };
   }
 
+  // ── Role Promotion ───────────────────────────────────────────────────────────
+
+  async promoteToSuperadmin(actorId: string, userId: string) {
+    if (actorId === userId) {
+      throw new BadRequestException('You cannot change your own role');
+    }
+
+    const user = await this.prisma.user.findUnique({ where: { id: userId } });
+    if (!user) throw new NotFoundException('User not found');
+
+    if (user.role === 'SUPERADMIN') {
+      throw new BadRequestException('User is already a SUPERADMIN');
+    }
+
+    const updated = await this.prisma.user.update({
+      where: { id: userId },
+      data: { role: 'SUPERADMIN' },
+      select: { id: true, email: true, firstName: true, lastName: true, role: true },
+    });
+
+    await this.prisma.auditLog.create({
+      data: {
+        actorId,
+        actorType: 'SUPERADMIN',
+        action: 'USER_PROMOTED_TO_SUPERADMIN',
+        entityType: 'USER',
+        entityId: userId,
+        metadata: { previousRole: user.role, newRole: 'SUPERADMIN' },
+      },
+    });
+
+    return updated;
+  }
+
   // ── Status Management ────────────────────────────────────────────────────────
 
   async updateUserStatus(actorId: string, userId: string, dto: UpdateUserStatusDto) {

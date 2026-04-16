@@ -59,4 +59,15 @@ export class SuperadminUsersController {
     const result = await this.usersService.updateUserStatus(req.user.id, userId, dto);
     return { success: true, data: result };
   }
+
+  @Patch(':userId/promote')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'Promote a user to SUPERADMIN',
+    description: 'Elevates any MEMBER or ADMIN to the SUPERADMIN role. Logs the action to the audit trail.',
+  })
+  async promote(@Param('userId') userId: string, @Request() req: any) {
+    const result = await this.usersService.promoteToSuperadmin(req.user.userId, userId);
+    return { success: true, data: result };
+  }
 }

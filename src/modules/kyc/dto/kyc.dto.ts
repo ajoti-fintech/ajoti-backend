@@ -153,6 +153,7 @@ export class KycResponseDto {
   userId: string;
   status: string;
   step: string;
+  kycLevel: number;
 
   nin?: string;
   bvn?: string;

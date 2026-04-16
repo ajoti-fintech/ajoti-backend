@@ -780,8 +780,9 @@ model KYC {
   userId String    @unique
   user   User      @relation(fields: [userId], references: [id], onDelete: Cascade)
 
-  status KYCStatus @default(NOT_SUBMITTED)
-  step   KYCStep   @default(NIN_REQUIRED)
+  status   KYCStatus @default(NOT_SUBMITTED)
+  step     KYCStep   @default(NIN_REQUIRED)
+  kycLevel Int       @default(0)
 
   // NIN/BVN — stored encrypted (AES-256-GCM, see FieldEncryptionService)
   nin String? @db.Text
