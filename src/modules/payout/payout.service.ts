@@ -19,6 +19,11 @@ import {
   PayoutStatus,
   MembershipStatus,
 } from '@prisma/client';
+
+// 2% company fee on non-loan payouts — covers Flutterwave, identity verification,
+// and future AML/credit/risk platform costs.
+// Loan payouts are excluded: they carry their own 10% fee in LoanService.
+const PLATFORM_FEE_PERCENT = 2n;
 import { PrismaService } from '@/prisma';
 import { LedgerService } from '../ledger/ledger.service';
 import { PayoutResult } from './interfaces/payout.interface';
@@ -124,16 +129,18 @@ export class PayoutService {
         const internalRef = `PAYOUT-${crypto.randomUUID()}`;
 
         // ── 4b. Loan deduction — net out any active loan for this recipient ─
-        const { netPayout, loanRepaid } = await this.loanService.processLoanRepaymentInTx(
-          recipientId,
-          circleId,
-          totalPot,
-          tx,
-        );
+        const { netPayout: postLoanPayout, loanRepaid } =
+          await this.loanService.processLoanRepaymentInTx(recipientId, circleId, totalPot, tx);
+
+        // ── 4c. Platform fee — 2% on non-loan payouts only ─────────────────
+        // Loan payouts carry their own 10% fee handled inside LoanService.
+        // The fee is credited back to the pool as explicit platform revenue.
+        const platformFee = loanRepaid ? 0n : (totalPot * PLATFORM_FEE_PERCENT) / 100n;
+        const netPayout = postLoanPayout - platformFee;
 
         // ── 5. Ledger movements ────────────────────────────────────────────
         //
-        // DEBIT the pool wallet — BucketType.MAIN (required by LedgerService)
+        // DEBIT the pool wallet for the full pot — BucketType.MAIN
         // The pool holds money as plain MAIN balance; there is no ROSCA bucket on it.
         //
         const poolDebitEntry = await this.ledger.writeEntry(
@@ -141,7 +148,7 @@ export class PayoutService {
             walletId: systemWallet.walletId,
             entryType: EntryType.DEBIT,
             movementType: MovementType.TRANSFER,
-            bucketType: BucketType.MAIN, // ← MUST be MAIN for DEBIT
+            bucketType: BucketType.MAIN,
             amount: totalPot,
             reference: `POOL-DEBIT-${crypto.randomUUID()}`,
             sourceType: LedgerSourceType.ROSCA_CIRCLE,
@@ -151,15 +158,14 @@ export class PayoutService {
           tx,
         );
 
-        // CREDIT the recipient wallet — BucketType.MAIN (required by LedgerService)
-        // Winner receives netPayout (totalPot minus any loan deduction + company fee).
-        //
+        // CREDIT the recipient wallet — BucketType.MAIN
+        // Winner receives netPayout (totalPot minus loan deduction OR platform fee).
         const recipientCreditEntry = await this.ledger.writeEntry(
           {
             walletId: winnerWallet.id,
             entryType: EntryType.CREDIT,
             movementType: MovementType.TRANSFER,
-            bucketType: BucketType.MAIN, // ← MUST be MAIN for CREDIT
+            bucketType: BucketType.MAIN,
             amount: netPayout,
             reference: internalRef,
             sourceType: LedgerSourceType.ROSCA_CIRCLE,
@@ -167,15 +173,40 @@ export class PayoutService {
             metadata: {
               circleId,
               cycleNumber,
-              ...(loanRepaid && {
-                loanRepaid: true,
-                grossPayout: totalPot.toString(),
-                netPayout: netPayout.toString(),
-              }),
+              grossPayout: totalPot.toString(),
+              netPayout: netPayout.toString(),
+              ...(loanRepaid && { loanRepaid: true }),
+              ...(!loanRepaid && { platformFee: platformFee.toString() }),
             },
           },
           tx,
         );
+
+        // CREDIT the pool with the platform fee — BucketType.MAIN
+        // This is explicit revenue: the pool was debited the full pot above,
+        // so this credit returns the fee portion as retained platform income.
+        if (platformFee > 0n) {
+          await this.ledger.writeEntry(
+            {
+              walletId: systemWallet.walletId,
+              entryType: EntryType.CREDIT,
+              movementType: MovementType.TRANSFER,
+              bucketType: BucketType.MAIN,
+              amount: platformFee,
+              reference: `PLATFORM-FEE-${crypto.randomUUID()}`,
+              sourceType: LedgerSourceType.PLATFORM_FEE,
+              sourceId: payoutId,
+              metadata: {
+                circleId,
+                cycleNumber,
+                recipientId,
+                grossPayout: totalPot.toString(),
+                feePercent: PLATFORM_FEE_PERCENT.toString(),
+              },
+            },
+            tx,
+          );
+        }
 
         // ── 6. Create payout record ────────────────────────────────────────
         const payout = await tx.roscaPayout.create({
@@ -205,9 +236,16 @@ export class PayoutService {
           await this.finalizeCircleAndReleaseCollateral(tx, circleId);
         }
 
+        this.logger.log(
+          `Payout processed: payoutId=${payout.id}, grossPayout=${totalPot}, ` +
+            `platformFee=${platformFee}, netPayout=${netPayout}, loanRepaid=${loanRepaid}`,
+        );
+
         return {
           payoutId: payout.id,
-          amount: totalPot.toString(),
+          amount: netPayout.toString(),
+          grossAmount: totalPot.toString(),
+          platformFee: platformFee.toString(),
           isLastCycle,
           recipientId,
           status: 'COMPLETED',

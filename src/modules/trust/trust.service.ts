@@ -170,4 +170,112 @@ export class TrustService {
     const displayScore = Math.round(300 + stats.trustScore * 5.5);
     return { ...stats, displayScore };
   }
+
+  // ── Super-admin read helpers ──────────────────────────────────────────────
+
+  async getAllTrustStats(options: {
+    page?: number;
+    limit?: number;
+    minScore?: number;
+    maxScore?: number;
+  }) {
+    const page = options.page ?? 1;
+    const limit = options.limit ?? 20;
+    const skip = (page - 1) * limit;
+
+    const where: Prisma.UserTrustStatsWhereInput = {
+      ...(options.minScore !== undefined && { trustScore: { gte: options.minScore } }),
+      ...(options.maxScore !== undefined && {
+        trustScore: {
+          ...(options.minScore !== undefined ? { gte: options.minScore } : {}),
+          lte: options.maxScore,
+        },
+      }),
+    };
+
+    const [stats, total] = await Promise.all([
+      this.prisma.userTrustStats.findMany({
+        where,
+        skip,
+        take: limit,
+        orderBy: { trustScore: 'desc' },
+        include: { user: { select: { firstName: true, lastName: true, email: true } } },
+      }),
+      this.prisma.userTrustStats.count({ where }),
+    ]);
+
+    return {
+      data: stats.map((s) => ({
+        ...s,
+        displayScore: Math.round(300 + s.trustScore * 5.5),
+      })),
+      meta: { total, page, limit, totalPages: Math.ceil(total / limit) },
+    };
+  }
+
+  async getTrustStatsFull(userId: string) {
+    const stats = await this.prisma.userTrustStats.findUnique({
+      where: { userId },
+      include: { user: { select: { firstName: true, lastName: true, email: true, createdAt: true } } },
+    });
+
+    if (!stats) return null;
+
+    const user = await this.prisma.user.findUnique({
+      where: { id: userId },
+      select: { createdAt: true },
+    });
+
+    const displayScore = Math.round(300 + stats.trustScore * 5.5);
+    const atiBreakdown = user ? this.computeATIBreakdown(stats, user.createdAt) : null;
+
+    return { ...stats, displayScore, atiBreakdown };
+  }
+
+  // ── Super-admin write helper ──────────────────────────────────────────────
+
+  async fireTrustEventAdmin(userId: string, event: TrustScoreEvent): Promise<void> {
+    await this.prisma.$transaction(
+      (tx) => this.updateTrustScore(userId, event, tx),
+      { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
+    );
+  }
+
+  // ── ATI component breakdown (read-only, for observability) ───────────────
+
+  private computeATIBreakdown(stats: UserTrustStats, userCreatedAt: Date) {
+    const recentBehavior =
+      stats.expectedPaymentsLastCycle > 0
+        ? (stats.onTimePaymentsLastCycle / stats.expectedPaymentsLastCycle) * 100
+        : 50;
+
+    const weightedPenalties =
+      stats.totalLatePayments * 0.5 + stats.totalMissedPayments * 1.5 + stats.totalDefaults * 3;
+    const historyBehavior =
+      stats.totalExpectedPayments > 0
+        ? Math.max(0, ((stats.totalOnTimePayments - weightedPenalties) / stats.totalExpectedPayments) * 100)
+        : 50;
+
+    const payoutReliability =
+      stats.expectedPostPayoutPayments > 0
+        ? (stats.postPayoutOnTimePayments / stats.expectedPostPayoutPayments) * 100
+        : 70;
+
+    const peerScore = stats.totalPeerRatings > 0 ? (stats.averagePeerRating / 5) * 100 : 50;
+
+    const now = new Date();
+    const monthsActive =
+      (now.getFullYear() - userCreatedAt.getFullYear()) * 12 +
+      (now.getMonth() - userCreatedAt.getMonth());
+    const historyLength = Math.min(100, monthsActive * 8.3);
+
+    return {
+      recentBehavior: Math.round(recentBehavior * 10) / 10,
+      historyBehavior: Math.round(historyBehavior * 10) / 10,
+      payoutReliability: Math.round(payoutReliability * 10) / 10,
+      peerScore: Math.round(peerScore * 10) / 10,
+      historyLength: Math.round(historyLength * 10) / 10,
+      weights: { recentBehavior: 0.3, historyBehavior: 0.25, payoutReliability: 0.2, peerScore: 0.15, historyLength: 0.1 },
+    };
+  }
 }

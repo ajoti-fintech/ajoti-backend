@@ -25,6 +25,7 @@ import { UsersService } from './users.service';
 import { DeleteUserAccountDto } from './dto/delete-user.dto';
 import { UserProfileResponseDto } from './dto/user-profile.dto';
 import { UpdateMyProfileDto, VerifyPendingEmailChangeDto } from './dto/update-profile.dto';
+import { SetTransactionPinDto } from './dto/transaction-pin.dto';
 
 @ApiTags('Users')
 @Controller('users')
@@ -120,5 +121,33 @@ export class UsersController {
       success: true,
       ...result,
     };
+  }
+
+  @Post('me/pin')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'Set or change transaction PIN',
+    description: 'Sets a 4-digit transaction PIN. If a PIN is already set, currentPin is required.',
+  })
+  async setTransactionPin(@CurrentUser('userId') userId: string, @Body() dto: SetTransactionPinDto) {
+    return this.usersService.setTransactionPin(userId, dto.pin, dto.currentPin);
+  }
+
+  @Get('me/pin/status')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Check whether the user has a transaction PIN set' })
+  async getPinStatus(@CurrentUser('userId') userId: string) {
+    const hasPin = await this.usersService.hasPinSet(userId);
+    return { hasPin };
+  }
+
+  @Post('me/request-admin')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'Request admin access',
+    description: 'Submits a request to become an admin. Requires KYC Level 1. Superadmin reviews and approves.',
+  })
+  async requestAdminAccess(@CurrentUser('userId') userId: string) {
+    return this.usersService.requestAdminAccess(userId);
   }
 }

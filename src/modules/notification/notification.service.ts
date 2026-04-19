@@ -9,6 +9,12 @@ import { passwordResetTemplate } from '../mail/templates/password-reset';
 import { passwordChangedTemplate } from '../mail/templates/password-change';
 import { kycStatusTemplate } from '../mail/templates/kyc-status';
 import { transactionTemplate } from '../mail/templates/transaction';
+import { payoutPositionTemplate } from '../mail/templates/payout-position';
+import { contributionReminderTemplate } from '../mail/templates/contribution-reminder';
+import { memberApprovedTemplate } from '../mail/templates/member-approved';
+import { memberRejectedTemplate } from '../mail/templates/member-rejected';
+import { circleStartedTemplate } from '../mail/templates/circle-started';
+import { topUpReminderTemplate } from '../mail/templates/top-up-reminder';
 import { NotificationGateway } from './notification-gateway';
 
 interface CreateNotificationParams {
@@ -16,6 +22,7 @@ interface CreateNotificationParams {
   type: NotificationType;
   title: string;
   body: string;
+  actionUrl?: string;
 }
 
 @Injectable()
@@ -41,6 +48,7 @@ export class NotificationService {
         type: params.type,
         title: params.title,
         body: params.body,
+        actionUrl: params.actionUrl ?? null,
         status: NotificationStatus.PENDING,
       },
     });
@@ -210,12 +218,13 @@ export class NotificationService {
    * Creates an in-app notification record.
    * This is returned via the API and pushed in real-time via WebSocket.
    */
-  async createInAppNotification(userId: string, title: string, body: string) {
+  async createInAppNotification(userId: string, title: string, body: string, actionUrl?: string) {
     const record = await this.createRecord({
       userId,
       type: NotificationType.IN_APP,
       title,
       body,
+      actionUrl,
     });
 
     // Real-time push via WebSocket
@@ -223,6 +232,7 @@ export class NotificationService {
       id: record.id,
       title: record.title,
       body: record.body,
+      actionUrl: record.actionUrl ?? null,
       createdAt: record.createdAt,
     });
 
@@ -275,5 +285,189 @@ export class NotificationService {
       data: { isRead: true, readAt: new Date() },
     });
     return { message: 'All notifications marked as read' };
+  }
+
+  // ── ROSCA Membership Status ───────────────────────────────────────────────
+
+  async sendMemberApprovedNotification(
+    userId: string,
+    email: string,
+    fullName: string,
+    circleName: string,
+    payoutPosition: number,
+  ) {
+    const title = `You've been accepted into ${circleName}`;
+    const body = `Congratulations! Your request to join ${circleName} has been approved. You've been assigned payout position #${payoutPosition}.`;
+
+    this.createInAppNotification(userId, title, body).catch((err) =>
+      this.logger.error(`Failed in-app approval notification for ${userId}`, err?.stack),
+    );
+
+    const record = await this.createRecord({ userId, type: NotificationType.EMAIL, title, body });
+    try {
+      const html = memberApprovedTemplate(fullName, circleName, payoutPosition);
+      await this.mail.send(email, title, html);
+      await this.markSent(record.id);
+    } catch (error) {
+      this.logger.error(`Failed to send member approved email to ${email}`, error?.stack);
+      await this.markFailed(record.id, error?.message);
+    }
+  }
+
+  async sendMemberRejectedNotification(
+    userId: string,
+    email: string,
+    fullName: string,
+    circleName: string,
+  ) {
+    const title = `Your request to join ${circleName} was not approved`;
+    const body = `Unfortunately, your request to join ${circleName} was not approved. Your reserved collateral has been returned to your wallet.`;
+
+    this.createInAppNotification(userId, title, body).catch((err) =>
+      this.logger.error(`Failed in-app rejection notification for ${userId}`, err?.stack),
+    );
+
+    const record = await this.createRecord({ userId, type: NotificationType.EMAIL, title, body });
+    try {
+      const html = memberRejectedTemplate(fullName, circleName);
+      await this.mail.send(email, title, html);
+      await this.markSent(record.id);
+    } catch (error) {
+      this.logger.error(`Failed to send member rejected email to ${email}`, error?.stack);
+      await this.markFailed(record.id, error?.message);
+    }
+  }
+
+  // ── Circle Started ────────────────────────────────────────────────────────
+
+  async sendCircleStartedNotification(
+    userId: string,
+    email: string,
+    fullName: string,
+    circleName: string,
+    firstDeadline: string,
+    contributionAmount: string,
+    payoutPosition: number,
+  ) {
+    const title = `${circleName} has started!`;
+    const body = `Your savings circle ${circleName} is now active. First contribution of ₦${contributionAmount} is due by ${firstDeadline}. Your payout position is #${payoutPosition}.`;
+
+    this.createInAppNotification(userId, title, body).catch((err) =>
+      this.logger.error(`Failed in-app circle-started notification for ${userId}`, err?.stack),
+    );
+
+    const record = await this.createRecord({ userId, type: NotificationType.EMAIL, title, body });
+    try {
+      const html = circleStartedTemplate(fullName, circleName, firstDeadline, contributionAmount, payoutPosition);
+      await this.mail.send(email, title, html);
+      await this.markSent(record.id);
+    } catch (error) {
+      this.logger.error(`Failed to send circle-started email to ${email}`, error?.stack);
+      await this.markFailed(record.id, error?.message);
+    }
+  }
+
+  // ── Top-up Reminder ───────────────────────────────────────────────────────
+
+  async sendTopUpReminderNotification(
+    userId: string,
+    email: string,
+    fullName: string,
+    circleName: string,
+    requiredNaira: string,
+    availableNaira: string,
+  ) {
+    const title = `Top up your wallet — ${circleName}`;
+    const body = `Your available balance (₦${availableNaira}) may be insufficient for your upcoming contribution of ₦${requiredNaira} to ${circleName}. Please top up your wallet.`;
+
+    this.createInAppNotification(userId, title, body).catch((err) =>
+      this.logger.error(`Failed in-app top-up notification for ${userId}`, err?.stack),
+    );
+
+    const record = await this.createRecord({ userId, type: NotificationType.EMAIL, title, body });
+    try {
+      const html = topUpReminderTemplate(fullName, circleName, requiredNaira, availableNaira);
+      await this.mail.send(email, title, html);
+      await this.markSent(record.id);
+    } catch (error) {
+      this.logger.error(`Failed to send top-up reminder email to ${email}`, error?.stack);
+      await this.markFailed(record.id, error?.message);
+    }
+  }
+
+  // ── Contribution Reminder ────────────────────────────────────────────────
+
+  async sendContributionReminder(
+    userId: string,
+    email: string,
+    fullName: string,
+    circleName: string,
+    cycleNumber: number,
+    contributionAmount: string,
+    deadline: string,
+  ) {
+    const title = `Contribution reminder — ${circleName} cycle ${cycleNumber}`;
+    const body = `You have not yet contributed for cycle ${cycleNumber} in ${circleName}. Deadline: ${deadline}.`;
+
+    // In-app
+    this.createInAppNotification(userId, title, body).catch((err) =>
+      this.logger.error(`Failed in-app reminder for ${userId}`, err?.stack),
+    );
+
+    // Email
+    const record = await this.createRecord({ userId, type: NotificationType.EMAIL, title, body });
+    try {
+      const html = contributionReminderTemplate(fullName, circleName, cycleNumber, contributionAmount, deadline);
+      await this.mail.send(email, title, html);
+      await this.markSent(record.id);
+    } catch (error) {
+      this.logger.error(`Failed to send contribution reminder email to ${email}`, error?.stack);
+      await this.markFailed(record.id, error?.message);
+    }
+  }
+
+  // ── Payout Position Notification ──────────────────────────────────────────
+  /**
+   * Send in-app + email notification when a member's payout position is
+   * assigned or reassigned.
+   * isReassignment = true  → admin manually changed the position
+   * isReassignment = false → initial auto-assignment on approval
+   */
+  async sendPayoutPositionNotification(
+    userId: string,
+    email: string,
+    fullName: string,
+    circleName: string,
+    position: number,
+    isReassignment: boolean,
+  ) {
+    const title = isReassignment
+      ? `Payout position updated — ${circleName}`
+      : `Payout position assigned — ${circleName}`;
+    const body = isReassignment
+      ? `Your payout position in ${circleName} has been updated to #${position} by the admin.`
+      : `You have been assigned payout position #${position} in ${circleName}.`;
+
+    // In-app notification (fire-and-forget, don't block the caller)
+    this.createInAppNotification(userId, title, body).catch((err) =>
+      this.logger.error(`Failed to create in-app notification for ${userId}`, err?.stack),
+    );
+
+    // Email
+    const record = await this.createRecord({
+      userId,
+      type: NotificationType.EMAIL,
+      title,
+      body,
+    });
+
+    try {
+      const html = payoutPositionTemplate(fullName, circleName, position, isReassignment);
+      await this.mail.send(email, title, html);
+      await this.markSent(record.id);
+    } catch (error) {
+      this.logger.error(`Failed to send payout position email to ${email}`, error?.stack);
+      await this.markFailed(record.id, error?.message);
+    }
   }
 }

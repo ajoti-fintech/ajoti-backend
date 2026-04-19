@@ -99,6 +99,7 @@ enum LedgerSourceType {
   REVERSAL             // Compensating entry for failure
   SYSTEM               // Automated internal jobs
   LOAN                 // Loan disbursement advance
+  PLATFORM_FEE         // 2% company fee deducted from non-loan payouts
 }
 
 enum BucketType {
@@ -299,6 +300,7 @@ model RoscaCircle {
   loans         Loan[]
   debts         MissedContributionDebt[]
   invites       RoscaInvite[]
+  peerReviews   PeerReview[]
 
   @@map("rosca_circles")
 }
@@ -712,18 +714,29 @@ enum Gender {
   FEMALE
 }
 
+enum UserStatus {
+  ACTIVE
+  SUSPENDED // Temporarily blocked — can be lifted
+  BANNED    // Permanent — cannot register or transact
+}
+
 model User {
-  id           String  @id @default(uuid())
-  email        String  @unique
-  pendingEmail String? @unique
+  id           String     @id @default(uuid())
+  email        String     @unique
+  pendingEmail String?    @unique
   firstName    String
-  lastName   String
-  password   String
-  dob        DateTime @default(now())
-  gender     Gender
-  phone      String
-  role       Role    @default(MEMBER)
-  isVerified Boolean @default(false)
+  lastName     String
+  password        String
+  transactionPin  String?   @map("transaction_pin")
+  dob             DateTime  @default(now())
+  gender          Gender
+  phone           String
+  role            Role      @default(MEMBER)
+  isVerified      Boolean   @default(false)
+  status          UserStatus @default(ACTIVE)
+  suspendedAt     DateTime?  @map("suspended_at")
+  suspensionReason String?   @map("suspension_reason")
+  adminRequestedAt DateTime? @map("admin_requested_at")
 
   // Relations
   wallet         Wallet?
@@ -743,6 +756,8 @@ model User {
   creditScore         CreditScore?
   loans               Loan[]
   missedDebts         MissedContributionDebt[]
+  reviewsGiven        PeerReview[]            @relation("ReviewsGiven")
+  reviewsReceived     PeerReview[]            @relation("ReviewsReceived")
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -766,12 +781,13 @@ model KYC {
   userId String    @unique
   user   User      @relation(fields: [userId], references: [id], onDelete: Cascade)
 
-  status KYCStatus @default(NOT_SUBMITTED)
-  step   KYCStep   @default(NIN_REQUIRED)
+  status   KYCStatus @default(NOT_SUBMITTED)
+  step     KYCStep   @default(NIN_REQUIRED)
+  kycLevel Int       @default(0)
 
-  // NIN/BVN
-  nin String? @db.VarChar(11)
-  bvn String? @db.VarChar(11)
+  // NIN/BVN — stored encrypted (AES-256-GCM, see FieldEncryptionService)
+  nin String? @db.Text
+  bvn String? @db.Text
 
   ninVerifiedAt DateTime?
   bvnVerifiedAt DateTime?
@@ -884,6 +900,7 @@ model Notification {
   type      NotificationType
   title     String
   body      String
+  actionUrl String?  @map("action_url") // Frontend deep-link (e.g. /rosca/invite/:token)
 
   status    NotificationStatus @default(PENDING)
   sentAt  DateTime?
@@ -919,3 +936,29 @@ model MailOutbox {
 
   @@index([status, attempts])
 }
+
+// ── PEER REVIEWS ──────────────────────────────────────────────────────────
+// Submitted at end of a completed circle. One review per reviewer per reviewee.
+// Member ratings update ATI trust score; admin ratings are internal feedback only.
+
+model PeerReview {
+  id         String      @id @default(uuid())
+  circleId   String      @map("circle_id")
+  circle     RoscaCircle @relation(fields: [circleId], references: [id])
+
+  reviewerId String @map("reviewer_id")
+  reviewer   User   @relation("ReviewsGiven", fields: [reviewerId], references: [id])
+
+  revieweeId String @map("reviewee_id")
+  reviewee   User   @relation("ReviewsReceived", fields: [revieweeId], references: [id])
+
+  rating  Int     // 1–5, integer only
+  comment String? @db.VarChar(280)
+
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@unique([circleId, reviewerId, revieweeId])
+  @@index([circleId, revieweeId])
+  @@map("peer_reviews")
+}
+

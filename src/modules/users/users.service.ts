@@ -42,6 +42,8 @@ const profileUserSelect = {
   lastName: true,
   dob: true,
   phone: true,
+  role: true,
+  adminRequestedAt: true,
 } satisfies Prisma.UserSelect;
 
 const profileUpdateUserSelect = {
@@ -470,6 +472,10 @@ export class UsersService {
       lastName: user.lastName,
       dob: this.formatDateOnly(user.dob),
       phone: user.phone,
+      role: (user as any).role ?? 'MEMBER',
+      adminRequestedAt: (user as any).adminRequestedAt
+        ? ((user as any).adminRequestedAt as Date).toISOString()
+        : null,
     };
   }
 
@@ -611,5 +617,73 @@ export class UsersService {
     if (total !== 0n || available !== 0n) {
       throw new ConflictException('Wallet balance must be exactly zero.');
     }
+  }
+
+  // ── Transaction PIN ──────────────────────────────────────────────────────────
+
+  async setTransactionPin(userId: string, pin: string, currentPin?: string) {
+    const user = await this.prisma.user.findUnique({
+      where: { id: userId },
+      select: { transactionPin: true },
+    });
+
+    if (!user) throw new NotFoundException('User not found');
+
+    // If a PIN is already set, require the current PIN to change it
+    if (user.transactionPin) {
+      if (!currentPin) {
+        throw new BadRequestException('Current PIN is required to change your transaction PIN');
+      }
+      const valid = await verifyHash(currentPin, user.transactionPin);
+      if (!valid) {
+        throw new BadRequestException('Current PIN is incorrect');
+      }
+    }
+
+    const pinHash = await hashValue(pin);
+    await this.prisma.user.update({
+      where: { id: userId },
+      data: { transactionPin: pinHash },
+    });
+
+    return { message: user.transactionPin ? 'Transaction PIN updated successfully' : 'Transaction PIN set successfully' };
+  }
+
+  async hasPinSet(userId: string): Promise<boolean> {
+    const user = await this.prisma.user.findUnique({
+      where: { id: userId },
+      select: { transactionPin: true },
+    });
+    return Boolean(user?.transactionPin);
+  }
+
+  // ── Admin Access Request ─────────────────────────────────────────────────────
+
+  async requestAdminAccess(userId: string) {
+    const user = await this.prisma.user.findUnique({
+      where: { id: userId },
+      select: { role: true, adminRequestedAt: true, kyc: { select: { kycLevel: true } } },
+    });
+
+    if (!user) throw new NotFoundException('User not found');
+
+    if (user.role === 'ADMIN' || user.role === 'SUPERADMIN') {
+      throw new BadRequestException('You already have admin access');
+    }
+
+    if (user.adminRequestedAt) {
+      throw new BadRequestException('Admin access request already submitted — pending review');
+    }
+
+    if ((user.kyc?.kycLevel ?? 0) < 1) {
+      throw new BadRequestException('You must complete KYC Level 1 before requesting admin access');
+    }
+
+    await this.prisma.user.update({
+      where: { id: userId },
+      data: { adminRequestedAt: new Date() },
+    });
+
+    return { message: 'Admin access request submitted successfully — our team will review it shortly' };
   }
 }

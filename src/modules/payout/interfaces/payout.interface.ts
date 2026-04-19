@@ -18,11 +18,12 @@ export interface PayoutContext {
  */
 export interface PayoutResult {
   payoutId: string;
-  amount: string; // string for JSON safety (BigInt → string)
+  amount: string;        // net amount recipient received (string for BigInt JSON safety)
+  grossAmount: string;   // totalPot before fee
+  platformFee: string;   // 2% company fee (0 when loanRepaid=true — loan has its own fee)
   isLastCycle: boolean;
   recipientId: string;
   status: 'COMPLETED' | 'PROCESSING' | 'FAILED';
-  // Optional: add processedAt, internalReference, etc. if needed downstream
 }
 
 /**

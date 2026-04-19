@@ -39,7 +39,7 @@ export interface FlwVerifyTransactionResponse {
     id: number;
     tx_ref: string;
     flw_ref: string;
-    amount: number; // Naira
+    amount: number; // Naira — FLW returns JSON numbers, not BigInt
     charged_amount: number;
     currency: string;
     status: 'successful' | 'failed' | 'pending';
@@ -56,7 +56,7 @@ export interface FlwVerifyTransactionResponse {
 export interface FlwTransferPayload {
   account_bank: string;
   account_number: string;
-  amount: number; // Naira — NOT kobo
+  amount: number; // Naira — NOT kobo (FLW accepts decimal amounts)
   narration: string;
   currency: string;
   reference: string; // Must be unique — use WITHDRAWAL-{uuid}
@@ -201,6 +201,8 @@ export class FlutterwaveProvider {
   readonly isMockMode: boolean;
 
   /** FLW's sandbox BVN — accepted for virtual account creation in test mode */
+  // 22222222280
+  // 22123456789
   readonly testBvn = '22222222222';
 
   private readonly webhookHash: string;

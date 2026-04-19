@@ -17,8 +17,6 @@ import {
   WalletBucketResponseDto,
   ApiResponseDto,
   formatBalanceResponse,
-  formatBalanceNaira,
-  WalletBalanceNairaDto,
 } from './dto/wallet.dto';
 import { LedgerService } from '../ledger/ledger.service';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
@@ -65,21 +63,6 @@ export class WalletController {
       success: true,
       message: 'Balance retrieved successfully',
       data: formatBalanceResponse(balance),
-    };
-  }
-
-  @Get('balance/naira')
-  @HttpCode(HttpStatus.OK)
-  @ApiOperation({ summary: 'Get wallet balance (Naira)' })
-  @ApiResponse({ status: 200, type: ApiResponseDto<WalletBalanceNairaDto> })
-  async getBalanceNaira(@CurrentUser('userId') userId: string) {
-    const wallet = await this.walletService.getOrCreateWallet(userId);
-    const balance = await this.walletService.getBalance(wallet.id);
-
-    return {
-      success: true,
-      message: 'Balance retrieved successfully',
-      data: formatBalanceNaira(balance),
     };
   }
 
