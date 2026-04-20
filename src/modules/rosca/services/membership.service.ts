@@ -217,9 +217,12 @@ export class MembershipService {
     );
   }
 
-  async getMyPendingJoinRequests(userId: string) {
+  async getMyJoinRequests(userId: string) {
     return await this.prisma.roscaMembership.findMany({
-      where: { userId, status: MembershipStatus.PENDING },
+      where: {
+        userId,
+        status: { in: [MembershipStatus.PENDING, MembershipStatus.REJECTED, MembershipStatus.ACTIVE] },
+      },
       include: {
         circle: {
           select: {
