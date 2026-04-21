@@ -53,15 +53,16 @@ export class RoscaController {
 
   @Get('my-join-requests')
   @HttpCode(HttpStatus.OK)
-  @ApiOperation({ summary: 'Get all pending join requests submitted by the current user' })
+  @ApiOperation({ summary: 'Get all join requests submitted by the current user' })
   async getMyPendingJoinRequests(@CurrentUser('userId') userId: string) {
-    const memberships = await this.membershipService.getMyPendingJoinRequests(userId);
+    const memberships = await this.membershipService.getMyJoinRequests(userId);
     return {
       success: true,
-      message: 'Pending join requests retrieved successfully',
+      message: 'Join requests retrieved successfully',
       data: memberships.map((m) => ({
         membershipId: m.id,
         circleId: m.circleId,
+        status: m.status,
         collateralReserved: m.collateralAmount.toString(),
         requestedAt: m.joinedAt,
         circle: {
