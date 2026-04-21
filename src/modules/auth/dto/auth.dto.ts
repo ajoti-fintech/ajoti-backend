@@ -11,7 +11,6 @@ import {
   IsDateString,
   IsIn,
   IsOptional,
-  IsEnum,
 } from 'class-validator';
 
 export class RegisterDto {
@@ -62,11 +61,6 @@ export class RegisterDto {
   @IsNotEmpty()
   readonly password: string;
 
-  @ApiProperty({ example: 'MEMBER', enum: Role })
-  @IsNotEmpty()
-  @IsEnum(Role) // Use IsEnum to validate against your actual Role enum
-  @IsIn([Role.MEMBER, Role.ADMIN, Role.SUPERADMIN])
-  readonly role: Role;
 }
 
 export class RoleDto {
