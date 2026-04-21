@@ -4,10 +4,12 @@ import {
   IsOptional,
   IsString,
   IsDateString,
+  IsBoolean,
   Min,
   Max,
   IsIn,
 } from 'class-validator';
+import { Transform } from 'class-transformer';
 import { Type } from 'class-transformer';
 import { ApiPropertyOptional, ApiProperty } from '@nestjs/swagger';
 import { UserStatus, Role, KYCStatus } from '@prisma/client';
@@ -64,6 +66,12 @@ export class UserFilterDto extends PaginationDto {
   @IsOptional()
   @IsString()
   search?: string;
+
+  @ApiPropertyOptional({ description: 'Filter users with a pending admin access request' })
+  @IsOptional()
+  @IsBoolean()
+  @Transform(({ value }) => value === 'true' || value === true)
+  pendingAdminRequest?: boolean;
 }
 
 export class UpdateUserStatusDto {

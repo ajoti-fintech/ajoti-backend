@@ -251,7 +251,7 @@ export class PayoutService {
           status: 'COMPLETED',
         };
       },
-      { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
+      { isolationLevel: Prisma.TransactionIsolationLevel.Serializable, timeout: 30000 },
     );
 
     // Notify the winner AFTER the DB transaction commits.
@@ -562,7 +562,7 @@ export class PayoutService {
         select: { email: true, firstName: true, lastName: true },
       });
 
-      if (!user) return;
+      if (!user || user.email.endsWith('@sim.test')) return;
 
       await this.authEventsQueue.add(
         AuthJobName.WALLET_TRANSACTION_COMPLETED,

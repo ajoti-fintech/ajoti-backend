@@ -19,6 +19,7 @@ export class SuperadminUsersService {
     if (dto.status) where.status = dto.status;
     if (dto.role) where.role = dto.role;
     if (dto.kycStatus) where.kyc = { status: dto.kycStatus };
+    if (dto.pendingAdminRequest) where.adminRequestedAt = { not: null };
 
     if (dto.registeredFrom || dto.registeredTo) {
       where.createdAt = {};
@@ -54,6 +55,7 @@ export class SuperadminUsersService {
           createdAt: true,
           suspendedAt: true,
           suspensionReason: true,
+          adminRequestedAt: true,
           kyc: { select: { status: true, step: true } },
           wallet: { select: { id: true, status: true } },
           _count: {
@@ -95,6 +97,7 @@ export class SuperadminUsersService {
         updatedAt: true,
         suspendedAt: true,
         suspensionReason: true,
+        adminRequestedAt: true,
         kyc: true,
         profile: true,
         virtualAccount: {
@@ -191,7 +194,10 @@ export class SuperadminUsersService {
         membershipId: m.id,
         membershipStatus: m.status,
         joinedAt: m.createdAt,
-        circle: m.circle,
+        circle: {
+          ...m.circle,
+          contributionAmount: m.circle.contributionAmount.toString(),
+        },
       })),
       recentActivity: recentActivity.map((e) => ({
         ...e,
