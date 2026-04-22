@@ -1,5 +1,5 @@
 // src/modules/rosca/dto/admin.dto.ts
-import { IsEnum, IsInt, IsOptional, IsString, Min } from 'class-validator';
+import { IsArray, IsEnum, IsInt, IsOptional, IsString, Min } from 'class-validator';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { CircleStatus, PayoutStatus, ScheduleStatus } from '@prisma/client';
 import { Type } from 'class-transformer';
@@ -31,6 +31,19 @@ export class RoundQueryDto {
   @IsInt()
   @Min(1)
   round?: number;
+}
+
+export class NotifyMembersDto {
+  @ApiPropertyOptional({ description: 'Custom reminder message' })
+  @IsOptional()
+  @IsString()
+  message?: string;
+
+  @ApiPropertyOptional({ description: 'Specific member user IDs to notify. Leave empty for all missing.' })
+  @IsOptional()
+  @IsArray()
+  @IsString({ each: true })
+  memberIds?: string[];
 }
 
 // ── Dashboard ───────────────────────────────────

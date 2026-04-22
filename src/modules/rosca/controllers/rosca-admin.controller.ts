@@ -42,6 +42,7 @@ import {
   DisbursementScheduleResponseDto,
   FinancialHealthResponseDto,
   RoundQueryDto,
+  NotifyMembersDto,
 } from '../dto/admin.dto';
 import { CreateInviteDto, InviteResponseDto } from '../dto/invite.dto';
 
@@ -188,11 +189,14 @@ export class RoscaAdminController {
     @Param('circleId') circleId: string,
     @CurrentUser('userId') adminId: string,
     @Query() query: RoundQueryDto,
+    @Body() body: NotifyMembersDto,
   ) {
     const data = await this.adminOversightService.notifyMissingMembers(
       circleId,
       adminId,
       query.round,
+      body.message,
+      body.memberIds,
     );
     return {
       success: true,

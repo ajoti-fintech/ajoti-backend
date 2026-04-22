@@ -16,6 +16,7 @@ import { memberRejectedTemplate } from '../mail/templates/member-rejected';
 import { circleStartedTemplate } from '../mail/templates/circle-started';
 import { circleFullMemberTemplate, circleFullAdminTemplate } from '../mail/templates/circle-full';
 import { topUpReminderTemplate } from '../mail/templates/top-up-reminder';
+import { adminReminderTemplate } from '../mail/templates/admin-reminder';
 import { NotificationGateway } from './notification-gateway';
 
 interface CreateNotificationParams {
@@ -423,6 +424,32 @@ export class NotificationService {
       await this.markSent(record.id);
     } catch (error) {
       this.logger.error(`Failed to send contribution reminder email to ${email}`, error?.stack);
+      await this.markFailed(record.id, error?.message);
+    }
+  }
+
+  // ── Admin Custom Reminder ────────────────────────────────────────────────
+
+  async sendAdminReminder(
+    userId: string,
+    email: string,
+    fullName: string,
+    circleName: string,
+    message: string,
+  ) {
+    const title = `Reminder from ${circleName}`;
+
+    this.createInAppNotification(userId, title, message).catch((err) =>
+      this.logger.error(`Failed in-app admin reminder for ${userId}`, err?.stack),
+    );
+
+    const record = await this.createRecord({ userId, type: NotificationType.EMAIL, title, body: message });
+    try {
+      const html = adminReminderTemplate(fullName, circleName, message);
+      await this.mail.send(email, title, html);
+      await this.markSent(record.id);
+    } catch (error) {
+      this.logger.error(`Failed to send admin reminder email to ${email}`, error?.stack);
       await this.markFailed(record.id, error?.message);
     }
   }

@@ -330,11 +330,17 @@ export class AdminOversightService {
     };
   }
 
-  async notifyMissingMembers(circleId: string, adminId: string, round?: number) {
+  async notifyMissingMembers(
+    circleId: string,
+    adminId: string,
+    round?: number,
+    customMessage?: string,
+    memberIds?: string[],
+  ) {
     const circle = await this.assertAdminOwnsCircle(circleId, adminId);
     const cycleNumber = round ?? circle.currentCycle;
 
-    const [members, contributed, schedule] = await Promise.all([
+    const [allMembers, contributed, schedule] = await Promise.all([
       this.prisma.roscaMembership.findMany({
         where: { circleId, status: MembershipStatus.ACTIVE },
         select: {
@@ -352,44 +358,66 @@ export class AdminOversightService {
       }),
     ]);
 
-    const contributedIds = new Set(contributed.map((c) => c.userId));
-    const missing = members.filter((m) => !contributedIds.has(m.userId));
+    // If specific memberIds provided, send to those regardless of contribution status
+    // Otherwise, send only to members who haven't contributed
+    let targets = allMembers;
+    if (memberIds && memberIds.length > 0) {
+      const idSet = new Set(memberIds);
+      targets = allMembers.filter((m) => idSet.has(m.userId));
+    } else {
+      const contributedIds = new Set(contributed.map((c) => c.userId));
+      targets = allMembers.filter((m) => !contributedIds.has(m.userId));
+    }
 
-    if (missing.length === 0) {
+    if (targets.length === 0) {
       return {
         notified: 0,
         cycleNumber,
-        message: 'All members have contributed for this cycle',
+        message: 'No members to notify',
       };
     }
 
-    const amountNaira = (Number(circle.contributionAmount) / 100).toLocaleString('en-NG', {
-      minimumFractionDigits: 2,
-      maximumFractionDigits: 2,
-    });
-    const deadline = schedule?.contributionDeadline
-      ? new Intl.DateTimeFormat('en-NG', {
-          dateStyle: 'full',
-          timeStyle: 'short',
-          timeZone: 'Africa/Lagos',
-        }).format(schedule.contributionDeadline)
-      : 'soon';
-
-    await Promise.allSettled(
-      missing.map((m) =>
-        this.notifications.sendContributionReminder(
-          m.userId,
-          m.user.email,
-          `${m.user.firstName} ${m.user.lastName}`,
-          circle.name,
-          cycleNumber,
-          amountNaira,
-          deadline,
+    if (customMessage) {
+      await Promise.allSettled(
+        targets.map((m) =>
+          this.notifications.sendAdminReminder(
+            m.userId,
+            m.user.email,
+            `${m.user.firstName} ${m.user.lastName}`,
+            circle.name,
+            customMessage,
+          ),
         ),
-      ),
-    );
+      );
+    } else {
+      const amountNaira = (Number(circle.contributionAmount) / 100).toLocaleString('en-NG', {
+        minimumFractionDigits: 2,
+        maximumFractionDigits: 2,
+      });
+      const deadline = schedule?.contributionDeadline
+        ? new Intl.DateTimeFormat('en-NG', {
+            dateStyle: 'full',
+            timeStyle: 'short',
+            timeZone: 'Africa/Lagos',
+          }).format(schedule.contributionDeadline)
+        : 'soon';
 
-    return { notified: missing.length, cycleNumber };
+      await Promise.allSettled(
+        targets.map((m) =>
+          this.notifications.sendContributionReminder(
+            m.userId,
+            m.user.email,
+            `${m.user.firstName} ${m.user.lastName}`,
+            circle.name,
+            cycleNumber,
+            amountNaira,
+            deadline,
+          ),
+        ),
+      );
+    }
+
+    return { notified: targets.length, cycleNumber };
   }
 
   // =========================================================================
