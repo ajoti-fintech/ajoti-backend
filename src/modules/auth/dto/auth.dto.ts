@@ -61,6 +61,9 @@ export class RegisterDto {
   @IsNotEmpty()
   readonly password: string;
 
+  @IsOptional()
+  readonly role?: unknown;
+
 }
 
 export class RoleDto {
