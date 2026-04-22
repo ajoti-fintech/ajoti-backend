@@ -273,6 +273,7 @@ export class MembershipService {
       }
 
       const newPosition = circle.filledSlots + 1;
+      const nowFull = newPosition === circle.maxSlots;
 
       const updated = await tx.roscaMembership.update({
         where: { circleId_userId: { circleId, userId } },
@@ -291,7 +292,7 @@ export class MembershipService {
         data: { filledSlots: { increment: 1 } },
       });
 
-      return { membership: updated, circleName: circle.name, newPosition };
+      return { membership: updated, circleName: circle.name, newPosition, nowFull, maxSlots: circle.maxSlots, adminId: circle.adminId };
     });
 
     const { user } = membership.membership;
@@ -306,6 +307,13 @@ export class MembershipService {
     this.notifications
       .sendPayoutPositionNotification(userId, user.email, fullName, membership.circleName, membership.newPosition, false)
       .catch((err) => console.error('Failed to send payout position notification', err));
+
+    // Circle full — notify all members + admin
+    if (membership.nowFull) {
+      this.notifyCircleFull(circleId, membership.circleName, membership.maxSlots, membership.adminId).catch(
+        (err) => console.error('Failed to send circle-full notifications', err),
+      );
+    }
 
     return membership.membership;
   }
@@ -370,5 +378,44 @@ export class MembershipService {
       .catch((err) => console.error('Failed to send member rejected notification', err));
 
     return result.membership;
+  }
+
+  private async notifyCircleFull(circleId: string, circleName: string, maxSlots: number, adminId: string) {
+    const members = await this.prisma.roscaMembership.findMany({
+      where: { circleId, status: MembershipStatus.ACTIVE },
+      include: { user: { select: { id: true, firstName: true, lastName: true, email: true } } },
+    });
+
+    const adminUser = await this.prisma.user.findUnique({
+      where: { id: adminId },
+      select: { id: true, firstName: true, lastName: true, email: true },
+    });
+
+    await Promise.allSettled([
+      // Notify each member
+      ...members.map((m) =>
+        this.notifications.sendCircleFullNotification(
+          m.userId,
+          m.user.email,
+          `${m.user.firstName} ${m.user.lastName}`,
+          circleName,
+          maxSlots,
+          false,
+        ),
+      ),
+      // Notify admin
+      ...(adminUser
+        ? [
+            this.notifications.sendCircleFullNotification(
+              adminUser.id,
+              adminUser.email,
+              `${adminUser.firstName} ${adminUser.lastName}`,
+              circleName,
+              maxSlots,
+              true,
+            ),
+          ]
+        : []),
+    ]);
   }
 }

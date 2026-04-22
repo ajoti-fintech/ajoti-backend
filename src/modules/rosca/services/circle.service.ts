@@ -295,22 +295,49 @@ export class CircleService {
       }
 
       if (dto.assignments && dto.assignments.length > 0) {
-        const userIds = dto.assignments.map((a) => a.userId);
-        const current = await tx.roscaMembership.findMany({
-          where: { circleId, userId: { in: userIds } },
+        const incomingPositions = dto.assignments.map((a) => a.position);
+        if (new Set(incomingPositions).size !== incomingPositions.length) {
+          throw new BadRequestException('Duplicate payout positions in assignment — each member must receive a unique position');
+        }
+        if (incomingPositions.some((p) => p < 1)) {
+          throw new BadRequestException('Payout positions must be integers ≥ 1');
+        }
+
+        const incomingUserIds = new Set(dto.assignments.map((a) => a.userId));
+
+        // Fetch ALL active memberships to detect conflicts and enable swapping
+        const allMembers = await tx.roscaMembership.findMany({
+          where: { circleId, status: MembershipStatus.ACTIVE },
           select: {
             userId: true,
             payoutPosition: true,
             user: { select: { firstName: true, lastName: true, email: true } },
           },
         });
-        const currentMap = new Map(current.map((m) => [m.userId, m]));
+        const currentMap = new Map(allMembers.map((m) => [m.userId, m]));
+        const positionHolder = new Map(
+          allMembers
+            .filter((m) => m.payoutPosition !== null)
+            .map((m) => [m.payoutPosition!, m.userId]),
+        );
+
+        // Build final writes: apply incoming assignments; swap displaced members
+        const writes = new Map<string, number>(); // userId → newPosition
+        for (const asn of dto.assignments) {
+          const displacedUserId = positionHolder.get(asn.position);
+          if (displacedUserId && !incomingUserIds.has(displacedUserId)) {
+            // Give displaced member the incoming member's current position
+            const incomingOldPos = currentMap.get(asn.userId)?.payoutPosition ?? null;
+            if (incomingOldPos !== null) writes.set(displacedUserId, incomingOldPos);
+          }
+          writes.set(asn.userId, asn.position);
+        }
 
         await Promise.all(
-          dto.assignments.map((asn) =>
+          Array.from(writes.entries()).map(([userId, position]) =>
             tx.roscaMembership.update({
-              where: { circleId_userId: { circleId, userId: asn.userId } },
-              data: { payoutPosition: asn.position },
+              where: { circleId_userId: { circleId, userId } },
+              data: { payoutPosition: position },
             }),
           ),
         );

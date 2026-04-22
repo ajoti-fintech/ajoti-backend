@@ -14,6 +14,7 @@ import { contributionReminderTemplate } from '../mail/templates/contribution-rem
 import { memberApprovedTemplate } from '../mail/templates/member-approved';
 import { memberRejectedTemplate } from '../mail/templates/member-rejected';
 import { circleStartedTemplate } from '../mail/templates/circle-started';
+import { circleFullMemberTemplate, circleFullAdminTemplate } from '../mail/templates/circle-full';
 import { topUpReminderTemplate } from '../mail/templates/top-up-reminder';
 import { NotificationGateway } from './notification-gateway';
 
@@ -467,6 +468,38 @@ export class NotificationService {
       await this.markSent(record.id);
     } catch (error) {
       this.logger.error(`Failed to send payout position email to ${email}`, error?.stack);
+      await this.markFailed(record.id, error?.message);
+    }
+  }
+
+  // ── Circle Full ──────────────────────────────────────────────────────────
+
+  async sendCircleFullNotification(
+    userId: string,
+    email: string,
+    fullName: string,
+    circleName: string,
+    totalSlots: number,
+    isAdmin: boolean,
+  ) {
+    const title = `${circleName} is full — all ${totalSlots} slots filled`;
+    const body = isAdmin
+      ? `All ${totalSlots} members have joined ${circleName}. Log in to activate the circle.`
+      : `${circleName} now has all ${totalSlots} members confirmed. The admin will start the cycle soon.`;
+
+    this.createInAppNotification(userId, title, body).catch((err) =>
+      this.logger.error(`Failed in-app circle-full notification for ${userId}`, err?.stack),
+    );
+
+    const record = await this.createRecord({ userId, type: NotificationType.EMAIL, title, body });
+    try {
+      const html = isAdmin
+        ? circleFullAdminTemplate(fullName, circleName, totalSlots)
+        : circleFullMemberTemplate(fullName, circleName, totalSlots);
+      await this.mail.send(email, title, html);
+      await this.markSent(record.id);
+    } catch (error) {
+      this.logger.error(`Failed to send circle-full email to ${email}`, error?.stack);
       await this.markFailed(record.id, error?.message);
     }
   }
