@@ -455,7 +455,7 @@ export class PayoutService {
    * Get payout history for a circle.
    */
   async getPayoutHistory(circleId: string) {
-    return this.prisma.roscaPayout.findMany({
+    const rows = await this.prisma.roscaPayout.findMany({
       where: { circleId },
       include: {
         recipient: {
@@ -467,6 +467,11 @@ export class PayoutService {
       },
       orderBy: { processedAt: 'desc' },
     });
+
+    return rows.map((p) => ({
+      ...p,
+      amount: p.amount.toString(),
+    }));
   }
 
   /**
