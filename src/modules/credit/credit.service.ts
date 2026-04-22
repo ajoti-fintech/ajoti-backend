@@ -57,8 +57,10 @@ export class CreditService {
    */
   async getFinalCreditScore(userId: string): Promise<FinalCreditScoreResult> {
     // A) Trust display score (internal — always available)
+    // getTrustScore returns displayScore in 0-100; scale to 300-850 for credit formula
     const trustStats = await this.trustService.getTrustScore(userId);
-    const trustDisplayScore = (trustStats as any).displayScore ?? DEFAULT_TRUST_DISPLAY_SCORE;
+    const rawDisplay = (trustStats as any).displayScore ?? DEFAULT_TRUST_DISPLAY_SCORE;
+    const trustDisplayScore = Math.round(300 + rawDisplay * 5.5);
 
     // B) External bureau score — null means unavailable
     const rawExternal = await this.externalCreditService.getExternalCreditScore(userId);
