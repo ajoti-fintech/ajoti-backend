@@ -230,8 +230,13 @@ export class WithdrawalService {
             } catch (flwError) {
                 // FLW call failed AFTER we debited the ledger
                 // Create compensating CREDIT (reversal)
+                const flwMessage =
+                    (flwError as any)?.response?.data?.message ||
+                    (flwError as Error)?.message ||
+                    'Unknown FLW error';
+
                 this.logger.error(
-                    `FLW transfer failed for ${withdrawalRef} — reversing`,
+                    `FLW transfer failed for ${withdrawalRef} — reversing. FLW: ${flwMessage}`,
                     flwError,
                 );
 
@@ -240,11 +245,11 @@ export class WithdrawalService {
                     wallet.id,
                     amountKobo,
                     withdrawalRef,
-                    `FLW initiation failed: ${(flwError as Error).message}`,
+                    `FLW initiation failed: ${flwMessage}`,
                 );
 
                 throw new InternalServerErrorException(
-                    'Withdrawal failed. Your balance has been restored.',
+                    `Withdrawal failed (${flwMessage}). Your balance has been restored.`,
                 );
             }
         } catch (error) {
