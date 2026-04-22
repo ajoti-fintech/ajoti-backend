@@ -316,7 +316,7 @@ export function formatCircleResponse(circle: any): RoscaCircleResponseDto {
         trustScore: m.user.userTrustStats
           ? Math.round(m.user.userTrustStats.trustScore)
           : 50,
-      })) || [],
+      })) ?? circle.members ?? [],
   };
 }
 
