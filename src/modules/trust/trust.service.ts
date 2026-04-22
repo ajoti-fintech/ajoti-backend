@@ -163,11 +163,11 @@ export class TrustService {
       return {
         userId,
         trustScore: 50,
-        displayScore: 575, // 300 + (50 × 5.5)
+        displayScore: 50,
       };
     }
 
-    const displayScore = Math.round(300 + stats.trustScore * 5.5);
+    const displayScore = Math.round(stats.trustScore);
     return { ...stats, displayScore };
   }
 
@@ -207,7 +207,7 @@ export class TrustService {
     return {
       data: stats.map((s) => ({
         ...s,
-        displayScore: Math.round(300 + s.trustScore * 5.5),
+        displayScore: Math.round(s.trustScore),
       })),
       meta: { total, page, limit, totalPages: Math.ceil(total / limit) },
     };
@@ -226,7 +226,7 @@ export class TrustService {
       select: { createdAt: true },
     });
 
-    const displayScore = Math.round(300 + stats.trustScore * 5.5);
+    const displayScore = Math.round(stats.trustScore);
     const atiBreakdown = user ? this.computeATIBreakdown(stats, user.createdAt) : null;
 
     return { ...stats, displayScore, atiBreakdown };

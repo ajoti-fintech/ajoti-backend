@@ -28,6 +28,10 @@ async function bootstrap() {
   //   },
   // });
 
+  // Trust the first proxy hop so req.ip resolves to the real client IP
+  // (required on Render, Railway, Heroku, and any reverse-proxy deployment)
+  app.set('trust proxy', 1);
+
   app.useBodyParser('json', {
     verify: (req: any, _res: any, buf: Buffer) => {
       if (buf && buf.length) {

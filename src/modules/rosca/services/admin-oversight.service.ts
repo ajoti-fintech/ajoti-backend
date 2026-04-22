@@ -166,7 +166,7 @@ export class AdminOversightService {
 
     return memberships.map((m) => {
       const stats = m.user.userTrustStats;
-      const displayScore = stats ? Math.round(300 + stats.trustScore * 5.5) : 575;
+      const displayScore = stats ? Math.round(stats.trustScore) : 50;
       const onTimeRate =
         stats && stats.totalExpectedPayments > 0
           ? Math.round((stats.totalOnTimePayments / stats.totalExpectedPayments) * 100)

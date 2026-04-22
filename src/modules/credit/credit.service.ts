@@ -19,7 +19,7 @@ const CREDIT_TIERS: { minScore: number; allowedPercent: number }[] = [
   { minScore: 550, allowedPercent: 20 },
 ];
 
-const DEFAULT_TRUST_DISPLAY_SCORE = 575; // neutral fallback per spec
+const DEFAULT_TRUST_DISPLAY_SCORE = 50;
 
 export interface FinalCreditScoreResult {
   externalScore: number;

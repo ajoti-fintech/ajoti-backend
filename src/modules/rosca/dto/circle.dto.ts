@@ -314,8 +314,8 @@ export function formatCircleResponse(circle: any): RoscaCircleResponseDto {
         position: m.payoutPosition,
         joinedAt: m.joinedAt,
         trustScore: m.user.userTrustStats
-          ? Math.round(300 + m.user.userTrustStats.trustScore * 5.5)
-          : 575,
+          ? Math.round(m.user.userTrustStats.trustScore)
+          : 50,
       })) || [],
   };
 }

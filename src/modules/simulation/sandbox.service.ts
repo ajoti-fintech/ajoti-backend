@@ -194,7 +194,7 @@ export class SandboxService {
         userId: entry.userId,
         contributed: entry.timing !== 'skip',
         timing: entry.timing,
-        trustScore: { raw, display: Math.round(300 + raw * 5.5) },
+        trustScore: { raw, display: Math.round(raw) },
       });
     }
 

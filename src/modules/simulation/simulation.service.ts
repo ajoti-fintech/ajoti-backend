@@ -649,5 +649,5 @@ class ResultTracker {
 async function readScore(prisma: PrismaService, userId: string): Promise<ScoreSnapshot> {
   const stats = await prisma.userTrustStats.findUnique({ where: { userId } });
   const raw = stats?.trustScore ?? 50;
-  return { raw, display: Math.round(300 + raw * 5.5) };
+  return { raw, display: Math.round(raw) };
 }
