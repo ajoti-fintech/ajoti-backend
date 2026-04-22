@@ -172,6 +172,19 @@ export class AuthService {
     });
 
     const fullName = `${registerDto.firstName} ${registerDto.lastName}`;
+
+    // Seed initial trust and credit scores
+    await this.prisma.userTrustStats.upsert({
+      where: { userId: user.id },
+      update: {},
+      create: { userId: user.id, trustScore: 50 },
+    });
+    await this.prisma.creditScore.upsert({
+      where: { userId: user.id },
+      update: {},
+      create: { userId: user.id, externalScore: 575, trustDisplayScore: 425, finalScore: 575 },
+    });
+
     await this.otpService.sendOtp(normalizedEmail, OTPPurpose.VERIFICATION, {
       subject: 'Verify your email',
       buildHtml: (args) => verificationOtpTemplate(args.otp, args.expiryMinutes, fullName),
@@ -251,6 +264,18 @@ export class AuthService {
     }
 
     const fullName = `${registerDto.firstName} ${registerDto.lastName}`;
+
+    // Seed initial trust and credit scores
+    await this.prisma.userTrustStats.upsert({
+      where: { userId: user.id },
+      update: {},
+      create: { userId: user.id, trustScore: 50 },
+    });
+    await this.prisma.creditScore.upsert({
+      where: { userId: user.id },
+      update: {},
+      create: { userId: user.id, externalScore: 575, trustDisplayScore: 425, finalScore: 575 },
+    });
 
     await this.otpService.sendOtp(normalizedEmail, OTPPurpose.VERIFICATION, {
       subject: 'Verify your email',
