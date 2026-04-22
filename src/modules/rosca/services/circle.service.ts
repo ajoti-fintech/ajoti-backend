@@ -439,7 +439,7 @@ export class CircleService {
       include: {
         admin: { select: { firstName: true, lastName: true, email: true } },
         memberships: {
-          where: { status: { in: [MembershipStatus.ACTIVE, MembershipStatus.COMPLETED] } },
+          where: { status: { in: [MembershipStatus.PENDING, MembershipStatus.ACTIVE, MembershipStatus.COMPLETED] } },
           include: {
             user: {
               select: {
@@ -492,7 +492,7 @@ export class CircleService {
           status: m.status,
           position: m.payoutPosition,
           joinedAt: m.joinedAt,
-          trustScore: Math.round(300 + raw * 5.5),
+          trustScore: Math.round(raw),
         };
       }),
       isRequestingUserAdmin: circle.adminId === userId,
