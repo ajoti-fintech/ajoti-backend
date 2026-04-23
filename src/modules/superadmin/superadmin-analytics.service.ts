@@ -297,6 +297,50 @@ export class SuperadminAnalyticsService {
     };
   }
 
+  // ── Dev: Zero All Balances ───────────────────────────────────────────────────
+
+  async resetAllBalances() {
+    // Find all wallets with a non-zero balance (latest ledger entry's balanceAfter > 0)
+    const wallets = await this.prisma.wallet.findMany({
+      include: {
+        ledgerEntries: {
+          orderBy: { createdAt: 'desc' },
+          take: 1,
+          select: { id: true, balanceAfter: true },
+        },
+      },
+    });
+
+    const toZero = wallets.filter(
+      (w) => w.ledgerEntries[0] && w.ledgerEntries[0].balanceAfter > 0n,
+    );
+
+    if (toZero.length === 0) return { zeroedWallets: 0 };
+
+    const reference = `ADJ_RESET_${Date.now()}`;
+
+    await this.prisma.ledgerEntry.createMany({
+      data: toZero.map((w) => {
+        const balance = w.ledgerEntries[0].balanceAfter;
+        return {
+          walletId: w.id,
+          reference,
+          entryType: EntryType.DEBIT,
+          movementType: MovementType.TRANSFER,
+          sourceType: LedgerSourceType.ADMIN_ADJUSTMENT,
+          amount: balance,
+          balanceBefore: balance,
+          balanceAfter: 0n,
+          metadata: { reason: 'superadmin_balance_reset' },
+        };
+      }),
+    });
+
+    await this.prisma.walletBucket.deleteMany();
+
+    return { zeroedWallets: toZero.length };
+  }
+
   // ── Wallet List ──────────────────────────────────────────────────────────────
 
   async listWallets(params: { page: number; limit: number; search?: string; status?: string }) {

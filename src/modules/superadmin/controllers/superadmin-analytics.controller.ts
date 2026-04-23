@@ -1,4 +1,4 @@
-import { Controller, Get, Query, UseGuards } from '@nestjs/common';
+import { Controller, Get, Query, Delete, UseGuards } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiBearerAuth } from '@nestjs/swagger';
 import { JwtAuthGuard } from '../../auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../../auth/guards/roles.guard';
@@ -54,6 +54,13 @@ export class SuperadminAnalyticsController {
   })
   async getGrowthMetrics(@Query() dto: GrowthMetricsDto) {
     return this.analyticsService.getGrowthMetrics(dto);
+  }
+
+  @Delete('reset-balances')
+  @ApiOperation({ summary: '[Dev] Zero out all wallet balances by clearing ledger entries and buckets' })
+  async resetAllBalances() {
+    const data = await this.analyticsService.resetAllBalances();
+    return { success: true, message: 'All wallet balances cleared', data };
   }
 
   @Get('wallets')
