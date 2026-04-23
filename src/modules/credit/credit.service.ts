@@ -19,7 +19,7 @@ const CREDIT_TIERS: { minScore: number; allowedPercent: number }[] = [
   { minScore: 550, allowedPercent: 20 },
 ];
 
-const DEFAULT_TRUST_DISPLAY_SCORE = 50;
+const DEFAULT_TRUST_DISPLAY_SCORE = 575; // neutral ATI (50) mapped to 300-850 range
 
 export interface FinalCreditScoreResult {
   externalScore: number;
@@ -56,11 +56,10 @@ export class CreditService {
    * Falls back to trust score only if external bureau is unavailable.
    */
   async getFinalCreditScore(userId: string): Promise<FinalCreditScoreResult> {
-    // A) Trust display score (internal — always available)
-    // displayScore is 0-100; map to credit range: score * 8.5 so 50/100 → 425 (50% of 850)
+    // A) Trust display score — already in 300-850 range (300 + ATI × 5.5)
     const trustStats = await this.trustService.getTrustScore(userId);
     const rawDisplay = (trustStats as any).displayScore ?? DEFAULT_TRUST_DISPLAY_SCORE;
-    const trustDisplayScore = Math.min(850, Math.max(300, Math.round(rawDisplay * 8.5)));
+    const trustDisplayScore = Math.min(850, Math.max(300, Math.round(rawDisplay)));
 
     // B) External bureau score — null means unavailable
     const rawExternal = await this.externalCreditService.getExternalCreditScore(userId);

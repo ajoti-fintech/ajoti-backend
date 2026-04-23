@@ -163,11 +163,12 @@ export class TrustService {
       return {
         userId,
         trustScore: 50,
-        displayScore: 50,
+        displayScore: 300 + Math.round(50 * 5.5), // 575 — neutral baseline
       };
     }
 
-    const displayScore = Math.round(stats.trustScore);
+    // trustScore is ATI (0–95); displayScore maps to 300–850 for external presentation
+    const displayScore = 300 + Math.round(stats.trustScore * 5.5);
     return { ...stats, displayScore };
   }
 
