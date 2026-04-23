@@ -244,15 +244,16 @@ export class NotificationService {
   // ─── Queries ──────────────────────────────────────────────────────────────
   async getUserNotifications(userId: string, page = 1, limit = 20) {
     const skip = (page - 1) * limit;
+    const where = { userId, type: NotificationType.IN_APP };
 
     const [notifications, total] = await Promise.all([
       this.prisma.notification.findMany({
-        where: { userId },
+        where,
         orderBy: { createdAt: 'desc' },
         skip,
         take: limit,
       }),
-      this.prisma.notification.count({ where: { userId } }),
+      this.prisma.notification.count({ where }),
     ]);
 
     return {
