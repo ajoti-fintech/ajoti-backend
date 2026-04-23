@@ -55,4 +55,20 @@ export class SuperadminAnalyticsController {
   async getGrowthMetrics(@Query() dto: GrowthMetricsDto) {
     return this.analyticsService.getGrowthMetrics(dto);
   }
+
+  @Get('wallets')
+  @ApiOperation({ summary: 'List all user wallets with balances' })
+  async listWallets(
+    @Query('page') page = '1',
+    @Query('limit') limit = '20',
+    @Query('search') search?: string,
+    @Query('status') status?: string,
+  ) {
+    return this.analyticsService.listWallets({
+      page: parseInt(page) || 1,
+      limit: Math.min(parseInt(limit) || 20, 100),
+      search,
+      status,
+    });
+  }
 }

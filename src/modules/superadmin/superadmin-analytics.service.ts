@@ -297,6 +297,64 @@ export class SuperadminAnalyticsService {
     };
   }
 
+  // ── Wallet List ──────────────────────────────────────────────────────────────
+
+  async listWallets(params: { page: number; limit: number; search?: string; status?: string }) {
+    const { page, limit, search, status } = params;
+    const skip = (page - 1) * limit;
+
+    const where: Record<string, unknown> = {};
+    if (status) where.status = status;
+    if (search) {
+      where.user = {
+        OR: [
+          { firstName: { contains: search, mode: 'insensitive' } },
+          { lastName: { contains: search, mode: 'insensitive' } },
+          { email: { contains: search, mode: 'insensitive' } },
+        ],
+      };
+    }
+
+    const [total, wallets] = await Promise.all([
+      this.prisma.wallet.count({ where }),
+      this.prisma.wallet.findMany({
+        where,
+        skip,
+        take: limit,
+        orderBy: { createdAt: 'desc' },
+        include: {
+          user: { select: { id: true, firstName: true, lastName: true, email: true, phone: true } },
+          ledgerEntries: {
+            orderBy: { createdAt: 'desc' },
+            take: 1,
+            select: { balanceAfter: true, createdAt: true },
+          },
+        },
+      }),
+    ]);
+
+    const rows = wallets.map((w) => {
+      const latestEntry = w.ledgerEntries[0];
+      const balanceKobo = latestEntry?.balanceAfter ?? 0n;
+      return {
+        walletId: w.id,
+        userId: w.userId,
+        status: w.status,
+        currency: w.currency,
+        createdAt: w.createdAt,
+        balanceKobo: balanceKobo.toString(),
+        balanceNaira: (Number(balanceKobo) / 100).toFixed(2),
+        lastActivityAt: latestEntry?.createdAt ?? null,
+        user: w.user,
+      };
+    });
+
+    return {
+      data: rows,
+      meta: { total, page, limit, totalPages: Math.ceil(total / limit) },
+    };
+  }
+
   // ── Helpers ──────────────────────────────────────────────────────────────────
 
   private resolveDateRange(dto: TransactionAnalyticsDto): { start: Date; end: Date } {
