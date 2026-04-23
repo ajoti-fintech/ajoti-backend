@@ -4,11 +4,12 @@ import { VirtualAccountController } from './virtual-account.controller';
 import { FlutterwaveModule } from '../flutterwave/flutterwave.module';
 import { PrismaModule } from '@/prisma';
 import { WalletModule } from '../wallet/wallet.module';
+import { FieldEncryptionService } from '@/common/encryption/field-encryption.service';
 
 @Module({
   imports: [FlutterwaveModule, PrismaModule, WalletModule],
   controllers: [VirtualAccountController],
-  providers: [VirtualAccountService],
+  providers: [VirtualAccountService, FieldEncryptionService],
   exports: [VirtualAccountService], // Exported so WebhooksModule can look up VAs
 })
 export class VirtualAccountModule {}

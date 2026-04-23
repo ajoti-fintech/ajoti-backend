@@ -12,6 +12,7 @@ import {
   FlwVirtualAccountResponse,
 } from '../flutterwave/flutterwave.provider';
 import { WalletService } from '../wallet/wallet.service';
+import { FieldEncryptionService } from '@/common/encryption/field-encryption.service';
 
 @Injectable()
 export class VirtualAccountService {
@@ -21,6 +22,7 @@ export class VirtualAccountService {
     private readonly prisma: PrismaService,
     private readonly flw: FlutterwaveProvider,
     private readonly walletService: WalletService,
+    private readonly encryption: FieldEncryptionService,
   ) {}
 
   /**
@@ -180,7 +182,11 @@ export class VirtualAccountService {
     const wallet = user.wallet ?? (await this.walletService.getOrCreateWallet(userId));
 
     // ── BVN Resolution ──────────────────────────────────────────────────────
-    let bvn = user.kyc?.bvn ?? null;
+    // BVN is stored encrypted in the DB; decrypt before sending to FLW
+    const rawKycBvn = user.kyc?.bvn
+      ? this.encryption.decrypt(user.kyc.bvn)
+      : null;
+    let bvn = rawKycBvn;
 
     if (this.flw.isLive && !user.kyc?.bvnVerifiedAt) {
       throw new BadRequestException('BVN must be verified before creating a live virtual account.');
