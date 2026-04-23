@@ -60,7 +60,7 @@ export class TrustAdminController {
       return {
         success: true,
         message: 'No trust stats found for this user — defaults apply',
-        data: { userId, trustScore: 50, displayScore: 50, atiBreakdown: null },
+        data: { userId, trustScore: 50, displayScore: 575, atiBreakdown: null },
       };
     }
     return { success: true, message: 'Trust stats retrieved', data };

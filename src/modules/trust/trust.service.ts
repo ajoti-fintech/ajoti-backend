@@ -208,7 +208,7 @@ export class TrustService {
     return {
       data: stats.map((s) => ({
         ...s,
-        displayScore: Math.round(s.trustScore),
+        displayScore: 300 + Math.round(s.trustScore * 5.5),
       })),
       meta: { total, page, limit, totalPages: Math.ceil(total / limit) },
     };
@@ -227,7 +227,7 @@ export class TrustService {
       select: { createdAt: true },
     });
 
-    const displayScore = Math.round(stats.trustScore);
+    const displayScore = 300 + Math.round(stats.trustScore * 5.5);
     const atiBreakdown = user ? this.computeATIBreakdown(stats, user.createdAt) : null;
 
     return { ...stats, displayScore, atiBreakdown };
