@@ -123,6 +123,13 @@ export class GrowthMetricsDto {
   period?: '7d' | '30d' | '90d' = '30d';
 }
 
+export class UndoWalletResetDto {
+  @ApiPropertyOptional({ example: 'Incorrect reset target wallet' })
+  @IsOptional()
+  @IsString()
+  reason?: string;
+}
+
 // ── Audit / Ledger ────────────────────────────────────────────────────────────
 
 export class LedgerQueryDto extends PaginationDto {
