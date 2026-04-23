@@ -1,5 +1,6 @@
 import { Module } from '@nestjs/common';
 import { PrismaModule } from '@/prisma/prisma.module';
+import { LedgerModule } from '../ledger/ledger.module';
 
 // Services
 import { SuperadminUsersService } from './superadmin-users.service';
@@ -16,7 +17,7 @@ import { SuperadminAuditController } from './controllers/superadmin-audit.contro
 import { SuperadminGovernanceController } from './controllers/superadmin-governance.controller';
 
 @Module({
-  imports: [PrismaModule],
+  imports: [PrismaModule, LedgerModule],
   controllers: [
     SuperadminUsersController,
     SuperadminKycController,

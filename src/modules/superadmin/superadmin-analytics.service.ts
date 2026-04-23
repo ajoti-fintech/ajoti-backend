@@ -1,6 +1,7 @@
-import { Injectable } from '@nestjs/common';
+import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '@/prisma/prisma.service';
 import { TransactionAnalyticsDto, GrowthMetricsDto } from './dto/superadmin.dto';
+import { LedgerService } from '../ledger/ledger.service';
 import {
   EntryType,
   MovementType,
@@ -13,7 +14,10 @@ import {
 
 @Injectable()
 export class SuperadminAnalyticsService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly ledgerService: LedgerService,
+  ) {}
 
   // ── Dashboard Snapshot ───────────────────────────────────────────────────────
 
@@ -297,48 +301,91 @@ export class SuperadminAnalyticsService {
     };
   }
 
-  // ── Dev: Zero All Balances ───────────────────────────────────────────────────
+  // ── Dev: Wallet-Scoped Balance Reset ─────────────────────────────────────────
 
-  async resetAllBalances() {
-    // Find all wallets with a non-zero balance (latest ledger entry's balanceAfter > 0)
-    const wallets = await this.prisma.wallet.findMany({
-      include: {
-        ledgerEntries: {
-          orderBy: { createdAt: 'desc' },
-          take: 1,
-          select: { id: true, balanceAfter: true },
-        },
+  async resetWalletBalance(walletId: string) {
+    const wallet = await this.prisma.wallet.findUnique({
+      where: { id: walletId },
+      select: { id: true },
+    });
+    if (!wallet) {
+      throw new NotFoundException(`Wallet with ID ${walletId} not found`);
+    }
+
+    const detailed = await this.ledgerService.getDetailedBalance(walletId);
+    const available = detailed.available;
+
+    if (available <= 0n) {
+      throw new BadRequestException('Wallet has no available balance to reset');
+    }
+
+    const resetToken = `wallet-reset-${walletId}-${Date.now()}`;
+    const resetEntry = await this.ledgerService.writeEntry({
+      walletId,
+      entryType: EntryType.DEBIT,
+      movementType: MovementType.TRANSFER,
+      amount: available,
+      reference: `ADMIN-WALLET-RESET-${walletId}-${Date.now()}`,
+      sourceType: LedgerSourceType.ADMIN_ADJUSTMENT,
+      sourceId: resetToken,
+      metadata: {
+        action: 'wallet_balance_reset',
+        resetToken,
+        availableBeforeKobo: available.toString(),
       },
     });
 
-    const toZero = wallets.filter(
-      (w) => w.ledgerEntries[0] && w.ledgerEntries[0].balanceAfter > 0n,
-    );
+    return {
+      walletId,
+      resetEntryId: resetEntry.id,
+      debitedAmountKobo: resetEntry.amount.toString(),
+      balanceAfterKobo: resetEntry.balanceAfter.toString(),
+    };
+  }
 
-    if (toZero.length === 0) return { zeroedWallets: 0 };
-
-    const reference = `ADJ_RESET_${Date.now()}`;
-
-    await this.prisma.ledgerEntry.createMany({
-      data: toZero.map((w) => {
-        const balance = w.ledgerEntries[0].balanceAfter;
-        return {
-          walletId: w.id,
-          reference,
-          entryType: EntryType.DEBIT,
-          movementType: MovementType.TRANSFER,
-          sourceType: LedgerSourceType.ADMIN_ADJUSTMENT,
-          amount: balance,
-          balanceBefore: balance,
-          balanceAfter: 0n,
-          metadata: { reason: 'superadmin_balance_reset' },
-        };
-      }),
+  async undoWalletBalanceReset(walletId: string, resetEntryId: string, reason?: string) {
+    const entry = await this.prisma.ledgerEntry.findUnique({
+      where: { id: resetEntryId },
     });
 
-    await this.prisma.walletBucket.deleteMany();
+    if (!entry || entry.walletId !== walletId) {
+      throw new NotFoundException('Reset entry not found for this wallet');
+    }
 
-    return { zeroedWallets: toZero.length };
+    if (
+      entry.entryType !== EntryType.DEBIT ||
+      entry.movementType !== MovementType.TRANSFER ||
+      entry.sourceType !== LedgerSourceType.ADMIN_ADJUSTMENT
+    ) {
+      throw new BadRequestException('Only admin wallet reset entries can be undone');
+    }
+
+    const existingReversal = await this.prisma.ledgerEntry.findFirst({
+      where: {
+        walletId: entry.walletId,
+        reference: `REV-${entry.reference}`,
+        sourceType: entry.sourceType,
+        sourceId: entry.sourceId,
+      },
+      select: { id: true },
+    });
+
+    if (existingReversal) {
+      throw new BadRequestException('This reset has already been undone');
+    }
+
+    const reversal = await this.ledgerService.createReversalEntry(
+      resetEntryId,
+      reason?.trim() || 'admin_wallet_reset_undo',
+    );
+
+    return {
+      walletId,
+      resetEntryId,
+      reversalEntryId: reversal.id,
+      restoredAmountKobo: reversal.amount.toString(),
+      balanceAfterKobo: reversal.balanceAfter.toString(),
+    };
   }
 
   // ── Wallet List ──────────────────────────────────────────────────────────────

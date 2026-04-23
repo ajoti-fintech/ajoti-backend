@@ -1,10 +1,10 @@
-import { Controller, Get, Query, Delete, UseGuards } from '@nestjs/common';
+import { Body, Controller, Get, Param, Post, Query, UseGuards } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiBearerAuth } from '@nestjs/swagger';
 import { JwtAuthGuard } from '../../auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../../auth/guards/roles.guard';
 import { Roles } from '@/common/decorators/roles.decorator';
 import { SuperadminAnalyticsService } from '../superadmin-analytics.service';
-import { TransactionAnalyticsDto, GrowthMetricsDto } from '../dto/superadmin.dto';
+import { GrowthMetricsDto, TransactionAnalyticsDto, UndoWalletResetDto } from '../dto/superadmin.dto';
 
 @ApiTags('Super Admin — Analytics')
 @Controller('superadmin/analytics')
@@ -56,11 +56,26 @@ export class SuperadminAnalyticsController {
     return this.analyticsService.getGrowthMetrics(dto);
   }
 
-  @Delete('reset-balances')
-  @ApiOperation({ summary: '[Dev] Zero out all wallet balances by clearing ledger entries and buckets' })
-  async resetAllBalances() {
-    const data = await this.analyticsService.resetAllBalances();
-    return { success: true, message: 'All wallet balances cleared', data };
+  @Post('wallets/:walletId/reset-balance')
+  @ApiOperation({ summary: '[Dev] Reset one wallet available balance to zero via ledger adjustment' })
+  async resetWalletBalance(@Param('walletId') walletId: string) {
+    const data = await this.analyticsService.resetWalletBalance(walletId);
+    return { success: true, message: 'Wallet available balance reset', data };
+  }
+
+  @Post('wallets/:walletId/reset-balance/:entryId/undo')
+  @ApiOperation({ summary: '[Dev] Undo one wallet balance reset by creating a reversal ledger entry' })
+  async undoWalletBalanceReset(
+    @Param('walletId') walletId: string,
+    @Param('entryId') entryId: string,
+    @Body() body: UndoWalletResetDto,
+  ) {
+    const data = await this.analyticsService.undoWalletBalanceReset(
+      walletId,
+      entryId,
+      body?.reason,
+    );
+    return { success: true, message: 'Wallet balance reset undone', data };
   }
 
   @Get('wallets')

@@ -123,6 +123,20 @@ export class NotificationProcessor extends WorkerHost {
 
   private async handleTransactionCompleted(data: WalletTransactionPayload) {
     this.logger.log(`wallet.transaction.completed for userId=${data.userId}, ref=${data.reference}`);
+
+    const isReversal = data.reference.startsWith('REVERSAL-');
+    const amountStr = `${data.currency} ${data.amount.toLocaleString()}`;
+
+    const inAppTitle = isReversal
+      ? 'Withdrawal Unsuccessful'
+      : data.type === 'CREDIT'
+        ? `You received ${amountStr}`
+        : `You sent ${amountStr}`;
+
+    const inAppBody = isReversal
+      ? `Your withdrawal of ${amountStr} could not be processed. Your funds have been returned to your wallet.`
+      : `Ref: ${data.reference}`;
+
     await Promise.all([
       this.notificationService.sendTransactionEmail(
         data.userId,
@@ -135,10 +149,8 @@ export class NotificationProcessor extends WorkerHost {
       ),
       this.notificationService.createInAppNotification(
         data.userId,
-        data.type === 'CREDIT'
-          ? `You received ${data.currency} ${data.amount.toLocaleString()}`
-          : `You sent ${data.currency} ${data.amount.toLocaleString()}`,
-        `Transaction reference: ${data.reference}`,
+        inAppTitle,
+        inAppBody,
       ),
     ]);
   }
