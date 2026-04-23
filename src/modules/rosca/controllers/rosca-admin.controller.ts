@@ -158,6 +158,17 @@ export class RoscaAdminController {
     return { success: true, message: 'Contributions retrieved successfully', data };
   }
 
+  @Get(':circleId/contributions-all')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: '[Admin] Get all contributions for a circle across all cycles' })
+  async getAllContributions(
+    @Param('circleId') circleId: string,
+    @CurrentUser('userId') adminId: string,
+  ) {
+    const data = await this.adminOversightService.getAllContributions(circleId, adminId);
+    return { success: true, message: 'All contributions retrieved successfully', data };
+  }
+
   @Get(':circleId/disbursements')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: '[Admin] Get full disbursement schedule for a circle' })

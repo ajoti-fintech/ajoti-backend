@@ -250,6 +250,27 @@ export class AdminOversightService {
     };
   }
 
+  async getAllContributions(circleId: string, adminId: string) {
+    await this.assertAdminOwnsCircle(circleId, adminId);
+
+    const contributions = await this.prisma.roscaContribution.findMany({
+      where: { circleId },
+      include: { user: { select: { id: true, firstName: true, lastName: true } } },
+      orderBy: [{ cycleNumber: 'asc' }, { paidAt: 'asc' }],
+    });
+
+    return contributions.map((c) => ({
+      contributionId: c.id,
+      userId: c.userId,
+      memberName: `${c.user.firstName} ${c.user.lastName}`,
+      cycleNumber: c.cycleNumber,
+      amount: c.amount.toString(),
+      penaltyAmount: c.penaltyAmount.toString(),
+      isLate: c.penaltyAmount > 0n,
+      paidAt: c.paidAt,
+    }));
+  }
+
   async getDisbursementSchedule(circleId: string, adminId: string) {
     await this.assertAdminOwnsCircle(circleId, adminId);
 
