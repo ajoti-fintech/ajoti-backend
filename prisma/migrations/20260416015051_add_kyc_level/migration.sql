@@ -1,0 +1,2 @@
+-- AlterTable
+ALTER TABLE "kyc" ADD COLUMN     "kycLevel" INTEGER NOT NULL DEFAULT 0;

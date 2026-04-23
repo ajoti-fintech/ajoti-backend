@@ -1,6 +1,7 @@
 # Dependencies
 node_modules/
-pnpm-lock.yaml
+# pnpm-lock.yaml
+tmp-agent-nestjs-skills
 
 # Build output
 dist/
@@ -8,11 +9,14 @@ build/
 
 # Environment files
 .env
-.env.local
+.env.prod
+.env.localR
 .env.*.local
 .env.development
 .env.staging
 .env.production
+.env.wallet.example
+docker-compose.yml
 
 # IDE
 .idea/
@@ -40,3 +44,22 @@ prisma/*.db-journal
 # Temporary files
 tmp/
 temp/
+AJOTI TRUST INDEX.pdf
+AgentReadme.md
+Agents.md
+USERPROFILEPLAN.md
+
+/generated/prisma
+outputs/
+
+# Project-local docs/artifacts
+CBN issues Baseline Standards for Automated Anti-Money Laundering Solution.pdf
+ComplainceNextsteps.md
+nextimpl.md
+architecturemap.md
+desktop.ini
+.tmp-agent-nestjs-skills/
+
+docker/docker-compose.hybrid.yml
+.claude/
+uploads/

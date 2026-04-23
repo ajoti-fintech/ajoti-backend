@@ -1,0 +1,2 @@
+-- AlterEnum
+ALTER TYPE "PayoutLogic" ADD VALUE 'ADMIN_ASSIGNED';

@@ -1,12 +1,36 @@
-import { Injectable, OnModuleInit, OnModuleDestroy, Logger } from '@nestjs/common';
+import {
+  Injectable,
+  OnModuleInit,
+  OnModuleDestroy,
+  Logger,
+  INestApplication,
+  Optional,
+} from '@nestjs/common';
+import { PrismaPg } from '@prisma/adapter-pg';
 import { PrismaClient } from '@prisma/client';
+import { Pool } from 'pg';
 
 @Injectable()
 export class PrismaService extends PrismaClient implements OnModuleInit, OnModuleDestroy {
   private readonly logger = new Logger(PrismaService.name);
+  private readonly pool: Pool;
 
-  constructor() {
+  constructor(@Optional() connectionStringOverride?: string) {
+    const connectionString = connectionStringOverride ?? process.env.DATABASE_URL;
+
+    if (!connectionString) {
+      throw new Error('DATABASE_URL is not set');
+    }
+
+    const pool = new Pool({
+      connectionString,
+      ssl: {
+        rejectUnauthorized: false,
+      },
+    });
+
     super({
+      adapter: new PrismaPg(pool),
       log: [
         { emit: 'event', level: 'query' },
         { emit: 'stdout', level: 'info' },
@@ -14,15 +38,23 @@ export class PrismaService extends PrismaClient implements OnModuleInit, OnModul
         { emit: 'stdout', level: 'error' },
       ],
     });
+
+    this.pool = pool;
   }
 
   async onModuleInit() {
     await this.$connect();
-    this.logger.log('Database connection established');
+    this.logger.log('Prisma connected');
   }
 
   async onModuleDestroy() {
     await this.$disconnect();
-    this.logger.log('Database connection closed');
+    await this.pool.end();
+  }
+
+  async enableShutdownHooks(app: INestApplication) {
+    process.on('beforeExit', async () => {
+      await app.close();
+    });
   }
 }
