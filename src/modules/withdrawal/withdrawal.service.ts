@@ -83,7 +83,7 @@ export class WithdrawalService {
         // Verify transaction PIN
         const user = await this.prisma.user.findUnique({
             where: { id: userId },
-            select: { transactionPin: true },
+            select: { transactionPin: true, createdAt: true },
         });
 
         if (!user?.transactionPin) {
@@ -93,6 +93,13 @@ export class WithdrawalService {
         const pinValid = await verifyHash(dto.transactionPin, user.transactionPin);
         if (!pinValid) {
             throw new UnauthorizedException('Incorrect transaction PIN');
+        }
+
+        const hoursSinceJoining = (Date.now() - user.createdAt.getTime()) / 3_600_000;
+        if (hoursSinceJoining < 24) {
+            throw new ForbiddenException(
+                'Withdrawals are available 24 hours after account creation (CBN requirement).',
+            );
         }
 
         // Find wallet

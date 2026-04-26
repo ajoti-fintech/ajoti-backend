@@ -1,4 +1,5 @@
 // src/modules/rosca/services/circle.service.ts
+import * as crypto from 'crypto';
 import {
   Injectable,
   BadRequestException,
@@ -11,8 +12,13 @@ import {
   MembershipStatus,
   ScheduleStatus,
   PayoutLogic,
+  EntryType,
+  MovementType,
+  BucketType,
+  LedgerSourceType,
 } from '@prisma/client';
 import { PrismaService } from '../../../prisma/prisma.service';
+import { LedgerService } from '../../ledger/ledger.service';
 import { NotificationService } from '../../notification/notification.service';
 import { PayoutSorter } from '../payout-sorter.util';
 import { calculateCollateral, parseBigInt } from '../utils/rosca.utils';
@@ -28,6 +34,7 @@ import { AdminListCirclesQueryDto } from '../dto/admin.dto';
 export class CircleService {
   constructor(
     private prisma: PrismaService,
+    private ledger: LedgerService,
     private notifications: NotificationService,
   ) {}
 
@@ -586,6 +593,67 @@ export class CircleService {
         }),
       },
       include: { admin: true },
+    });
+  }
+
+  async closeCircle(circleId: string, adminId: string) {
+    return await this.prisma.$transaction(async (tx) => {
+      const circle = await tx.roscaCircle.findUnique({
+        where: { id: circleId },
+        include: {
+          memberships: {
+            where: { status: MembershipStatus.ACTIVE },
+            include: { user: { select: { id: true } } },
+          },
+        },
+      });
+
+      if (!circle) throw new NotFoundException('Circle not found');
+      if (circle.adminId !== adminId) throw new ForbiddenException('Only the circle admin can close this group');
+      if (circle.status === CircleStatus.CANCELLED) throw new BadRequestException('Circle is already closed');
+      if (circle.status === CircleStatus.COMPLETED) throw new BadRequestException('Cannot close a completed circle');
+
+      // Release collateral for every active member
+      for (const membership of circle.memberships) {
+        const wallet = await tx.wallet.findUnique({ where: { userId: membership.user.id } });
+        if (!wallet) continue;
+
+        if (membership.collateralAmount > 0n && !membership.collateralReleased) {
+          await this.ledger.writeEntry(
+            {
+              walletId: wallet.id,
+              entryType: EntryType.RELEASE,
+              movementType: MovementType.TRANSFER,
+              bucketType: BucketType.ROSCA,
+              amount: membership.collateralAmount,
+              reference: `COLL-REL-${crypto.randomUUID()}`,
+              sourceType: LedgerSourceType.COLLATERAL_RESERVE,
+              sourceId: membership.id,
+              metadata: { circleId, action: 'CIRCLE_CLOSED' },
+            },
+            tx,
+          );
+
+          await tx.roscaMembership.update({
+            where: { id: membership.id },
+            data: { collateralReleased: true, status: MembershipStatus.LEFT },
+          });
+        }
+
+        this.notifications
+          .createInAppNotification(
+            membership.user.id,
+            `${circle.name} has been closed`,
+            `The savings circle "${circle.name}" has been closed by the admin. Your collateral has been released back to your wallet.`,
+            `/rosca`,
+          )
+          .catch(() => {});
+      }
+
+      return await tx.roscaCircle.update({
+        where: { id: circleId },
+        data: { status: CircleStatus.CANCELLED },
+      });
     });
   }
 

@@ -203,6 +203,14 @@ export class RoscaController {
     };
   }
 
+  @Get('invite-preview/:token')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Get invite details by token (before accepting)' })
+  async getInvitePreview(@Param('token') token: string) {
+    const data = await this.inviteService.getInvitePreview(token);
+    return { success: true, data };
+  }
+
   @Post('join-by-invite')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Join a private ROSCA circle using an invite token' })

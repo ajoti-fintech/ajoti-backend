@@ -289,6 +289,18 @@ export class RoscaAdminController {
     };
   }
 
+  @Patch(':circleId/close')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: '[Admin] Close (cancel) a ROSCA circle and release all member collateral' })
+  async closeCircle(@Param('circleId') circleId: string, @CurrentUser('userId') adminId: string) {
+    const circle = await this.circleService.closeCircle(circleId, adminId);
+    return {
+      success: true,
+      message: 'Circle closed successfully. All collateral has been released.',
+      data: formatCircleResponse(circle),
+    };
+  }
+
   @Patch(':circleId/activate')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: '[Admin] Verify and activate a ROSCA circle' })
