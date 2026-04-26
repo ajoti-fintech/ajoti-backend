@@ -636,7 +636,7 @@ export class CircleService {
 
           await tx.roscaMembership.update({
             where: { id: membership.id },
-            data: { collateralReleased: true, status: MembershipStatus.LEFT },
+            data: { collateralReleased: true, status: MembershipStatus.EXITED },
           });
         }
 
